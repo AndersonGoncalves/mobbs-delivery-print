@@ -9,11 +9,14 @@ const mockPrinter = {
   execute: jest.fn(),
 };
 
+const thermalPrinterConstructor = jest.fn().mockImplementation(() => mockPrinter);
+
 jest.mock('node-thermal-printer', () => ({
-  printer: jest.fn().mockImplementation(() => mockPrinter),
+  printer: thermalPrinterConstructor,
   types: { EPSON: 'epson', STAR: 'star' },
 }));
 
+import { windowsPrinterDriver } from './windowsPrinterDriver';
 import { createPrinter } from './printer';
 
 describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', () => {
@@ -50,5 +53,27 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     await expect(printer.print([{ text: 'ID PEDIDO: 38' }])).rejects.toThrow('printer:POS-80');
     expect(mockPrinter.println).not.toHaveBeenCalled();
     expect(mockPrinter.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('createPrinter — driver (specs/0144-driver-nativo-impressao-bridge REQ-1)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('passa o driver do Windows (PowerShell/winspool) quando a interface é "printer:..."', () => {
+    createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    expect(thermalPrinterConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ interface: 'printer:POS-80', driver: windowsPrinterDriver }),
+    );
+  });
+
+  it('não usa driver nenhum quando a interface é de rede (tcp://...)', () => {
+    createPrinter({ printerInterface: 'tcp://192.168.0.100', printerType: 'epson' });
+
+    expect(thermalPrinterConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ interface: 'tcp://192.168.0.100', driver: undefined }),
+    );
   });
 });
