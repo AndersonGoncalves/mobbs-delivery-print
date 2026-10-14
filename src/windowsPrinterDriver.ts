@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'fs';
+import { existsSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -21,13 +21,22 @@ import { join } from 'path';
  * e interpreta o script.
  */
 
+/**
+ * specs/0150-cache-assembly-driver-powershell — `Add-Type -TypeDefinition` recompila o C# do
+ * zero a cada chamada (invoca o compilador, ~1-3s+) — lento o bastante pra estourar o tempo de
+ * espera curto que a impressão manual direta usa antes de cair pro fallback do navegador
+ * (`specs/0147`), mesmo a impressão em si tendo sucesso (só demorada). Em vez disso, compila UMA
+ * vez só (`ensureAssemblyCompiled`, cacheada em disco entre reinicializações do bridge) e reusa
+ * via `Add-Type -Path` (carrega o assembly já pronto, sem recompilar) em toda chamada seguinte —
+ * ordens de grandeza mais rápido.
+ */
+const ASSEMBLY_PATH = join(tmpdir(), 'mobbs-delivery-print-raw-printer-helper.dll');
+
 // RawPrinterHelper — adaptação do exemplo oficial da Microsoft (KB322090, "How to send raw data
-// to a printer"), definido uma vez via `Add-Type` dentro do script de cada chamada.
-// `winspool.drv` é a API nativa do Windows pra fila de impressão; `StartDocPrinter`/`WritePrinter`
-// com `pDataType = "RAW"` envia os bytes sem nenhum processamento/paginação do driver gráfico —
-// exatamente o modo ESC/POS espera.
-const RAW_PRINTER_HELPER_TYPE_DEF = `
-Add-Type -TypeDefinition @"
+// to a printer"). `winspool.drv` é a API nativa do Windows pra fila de impressão;
+// `StartDocPrinter`/`WritePrinter` com `pDataType = "RAW"` envia os bytes sem nenhum
+// processamento/paginação do driver gráfico — exatamente o modo ESC/POS espera.
+const RAW_PRINTER_HELPER_CSHARP = `
 using System;
 using System.Runtime.InteropServices;
 public class MobbsRawPrinterHelper {
@@ -93,7 +102,6 @@ public class MobbsRawPrinterHelper {
         return true;
     }
 }
-"@
 `;
 
 function psQuote(value: string): string {
@@ -110,6 +118,20 @@ function runPowerShellScript(script: string): void {
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', buildEncodedCommand(script)],
     { windowsHide: true, encoding: 'utf-8' },
   );
+}
+
+/** specs/0150-cache-assembly-driver-powershell — compila o helper C# uma vez só, cacheado em
+ * disco (`ASSEMBLY_PATH`) entre reinicializações do bridge. Chamado proativamente ao iniciar
+ * (`index.ts`) e, de qualquer forma, de novo (idempotente — `existsSync` primeiro) antes de cada
+ * impressão, caso o cache tenha sido apagado ou o processo não tenha chamado o warm-up. */
+export function ensureAssemblyCompiled(): void {
+  if (existsSync(ASSEMBLY_PATH)) return;
+  const compileScript = `
+Add-Type -OutputAssembly ${psQuote(ASSEMBLY_PATH)} -OutputType Library -TypeDefinition @"
+${RAW_PRINTER_HELPER_CSHARP}
+"@
+`;
+  runPowerShellScript(compileScript);
 }
 
 /** specs/0146 — mensagem real do PowerShell (via stderr), pra não esconder o motivo de verdade
@@ -133,12 +155,13 @@ export function getLastPrinterDriverError(): string | undefined {
 }
 
 function sendRawBytes(printerName: string, data: Buffer): void {
+  ensureAssemblyCompiled();
   const dir = mkdtempSync(join(tmpdir(), 'mobbs-delivery-print-'));
   const dataPath = join(dir, 'job.bin');
   try {
     writeFileSync(dataPath, data);
     const script = `
-${RAW_PRINTER_HELPER_TYPE_DEF}
+Add-Type -Path ${psQuote(ASSEMBLY_PATH)}
 $bytes = [System.IO.File]::ReadAllBytes(${psQuote(dataPath)})
 $errorMessage = ""
 $ok = [MobbsRawPrinterHelper]::SendBytesToPrinter(${psQuote(printerName)}, $bytes, [ref]$errorMessage)

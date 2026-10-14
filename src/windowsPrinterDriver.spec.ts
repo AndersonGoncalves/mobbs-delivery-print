@@ -4,14 +4,16 @@ jest.mock('child_process', () => ({ execFileSync: (...args: unknown[]) => execFi
 const writeFileSync = jest.fn();
 const unlinkSync = jest.fn();
 const rmdirSync = jest.fn();
+const existsSync = jest.fn();
 jest.mock('fs', () => ({
   mkdtempSync: jest.fn(() => '/tmp/mobbs-delivery-print-fake'),
   writeFileSync: (...args: unknown[]) => writeFileSync(...args),
   unlinkSync: (...args: unknown[]) => unlinkSync(...args),
   rmdirSync: (...args: unknown[]) => rmdirSync(...args),
+  existsSync: (...args: unknown[]) => existsSync(...args),
 }));
 
-import { windowsPrinterDriver, getLastPrinterDriverError } from './windowsPrinterDriver';
+import { windowsPrinterDriver, getLastPrinterDriverError, ensureAssemblyCompiled } from './windowsPrinterDriver';
 
 /** As chamadas reais vão todas via `-EncodedCommand` (specs/0146) — decodifica o argumento pra
  * conseguir inspecionar o script PowerShell de verdade nos testes. */
@@ -24,6 +26,10 @@ function decodedScriptFromCall(callIndex = 0): string {
 describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs/0146-robustez-driver-powershell)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // specs/0150-cache-assembly-driver-powershell — por padrão, assembly já compilado (cenário
+    // comum após o warm-up na inicialização); testes específicos de `ensureAssemblyCompiled`
+    // sobrescrevem isso.
+    existsSync.mockReturnValue(true);
   });
 
   it('getPrinters() devolve lista vazia (nunca usado — seleção sempre por nome explícito)', () => {
@@ -78,7 +84,10 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs
 
     expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining('job.bin'), data);
     expect(execFileSync).toHaveBeenCalledWith('powershell.exe', expect.arrayContaining(['-EncodedCommand']), expect.any(Object));
+    // specs/0150 — carrega o assembly já compilado (`Add-Type -Path`), não recompila o C# do zero.
     const script = decodedScriptFromCall();
+    expect(script).toContain('Add-Type -Path');
+    expect(script).not.toContain('OutputAssembly');
     expect(script).toContain("SendBytesToPrinter('MP-4200 TH'");
     expect(script).toContain('job.bin');
     expect(success).toHaveBeenCalledWith('ok');
@@ -101,5 +110,44 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs
     expect(getLastPrinterDriverError()).toBe('WritePrinter falhou (codigo 1801)');
     // limpeza acontece mesmo quando o PowerShell falha.
     expect(unlinkSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ensureAssemblyCompiled (specs/0150-cache-assembly-driver-powershell)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('compila (uma vez) quando o assembly ainda não existe em disco', () => {
+    existsSync.mockReturnValue(false);
+    execFileSync.mockReturnValue('');
+
+    ensureAssemblyCompiled();
+
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+    const script = decodedScriptFromCall();
+    expect(script).toContain('Add-Type -OutputAssembly');
+    expect(script).toContain('MobbsRawPrinterHelper');
+  });
+
+  it('não chama o PowerShell quando o assembly já existe (cache)', () => {
+    existsSync.mockReturnValue(true);
+
+    ensureAssemblyCompiled();
+
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('printDirect compila primeiro (se preciso) e só depois imprime, quando o assembly ainda não existe', () => {
+    existsSync.mockReturnValue(false);
+    execFileSync.mockReturnValue('');
+    const success = jest.fn();
+
+    windowsPrinterDriver.printDirect({ data: Buffer.from('x'), printer: 'MP-4200 TH', success, error: jest.fn() });
+
+    expect(execFileSync).toHaveBeenCalledTimes(2);
+    expect(decodedScriptFromCall(0)).toContain('Add-Type -OutputAssembly');
+    expect(decodedScriptFromCall(1)).toContain('Add-Type -Path');
+    expect(success).toHaveBeenCalledWith('ok');
   });
 });

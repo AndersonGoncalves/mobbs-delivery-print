@@ -6,6 +6,7 @@ import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
 import { createLocalPrintServer } from './localServer';
+import { ensureAssemblyCompiled } from './windowsPrinterDriver';
 import { BUILD_COMMIT, BUILD_DATE } from './buildInfo';
 
 /**
@@ -29,6 +30,20 @@ async function main() {
   const config = loadConfig();
   const bffClient = new BffClient(config);
   const printer = createPrinter(config);
+
+  /** specs/0150-cache-assembly-driver-powershell REQ-2 — compila o driver de impressão (Windows)
+   * uma vez já na inicialização, pra a primeira impressão de verdade (manual ou automática) já
+   * ser rápida, sem esperar a primeira chamada pagar o custo de compilação. Só faz sentido pra
+   * `printer:...` (impressora instalada no Windows) — `tcp://...` não usa esse driver. Melhor-
+   * esforço: se falhar aqui (ex. PowerShell indisponível), não derruba o processo — a tentativa
+   * de novo (e o erro de verdade, se persistir) acontece na primeira impressão mesmo. */
+  if (config.printerInterface.startsWith('printer:')) {
+    try {
+      ensureAssemblyCompiled();
+    } catch (error) {
+      console.error(`Aviso: não foi possível preparar o driver de impressão de antemão (${error instanceof Error ? error.message : String(error)}) — vai tentar de novo na primeira impressão.`);
+    }
+  }
 
   /** specs/0147-impressao-manual-direta-bridge REQ-7 — roda em paralelo ao ciclo de consulta
    * abaixo; o botão "Imprimir" manual da retaguarda chama isso direto, sem esperar o próximo
