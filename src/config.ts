@@ -1,5 +1,3 @@
-import 'dotenv/config';
-
 export interface Config {
   bffUrl: string;
   apiKey: string;

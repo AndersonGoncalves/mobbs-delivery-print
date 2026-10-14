@@ -1,0 +1,92 @@
+import { ensureConfigured, SetupIO } from './setup';
+
+function buildIO(answers: string[]): SetupIO & { questions: string[]; logs: string[]; closed: boolean } {
+  const questions: string[] = [];
+  const logs: string[] = [];
+  let i = 0;
+  return {
+    questions,
+    logs,
+    closed: false,
+    question: async (prompt: string) => {
+      questions.push(prompt);
+      const answer = answers[i];
+      i += 1;
+      return answer ?? '';
+    },
+    log: (message: string) => logs.push(message),
+    close() {
+      this.closed = true;
+    },
+  };
+}
+
+describe('ensureConfigured', () => {
+  it('não pergunta nada quando o .env já existe', async () => {
+    const io = buildIO([]);
+    const exists = jest.fn().mockReturnValue(true);
+    const write = jest.fn();
+
+    await ensureConfigured('/configs', io, exists, write);
+
+    expect(exists).toHaveBeenCalledWith('/configs/.env');
+    expect(io.questions).toHaveLength(0);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('pergunta tudo e grava o .env quando ele não existe', async () => {
+    const io = buildIO(['', 'minha-chave', 'printer:POS-80', '']);
+    const exists = jest.fn().mockReturnValue(false);
+    const write = jest.fn().mockResolvedValue(undefined);
+
+    await ensureConfigured('/configs', io, exists, write);
+
+    expect(io.questions).toHaveLength(4);
+    expect(write).toHaveBeenCalledWith(
+      '/configs/.env',
+      [
+        'BFF_URL=https://api.bsdelivery.com.br',
+        'PRINT_API_KEY=minha-chave',
+        'PRINTER_INTERFACE=printer:POS-80',
+        'PRINTER_TYPE=epson',
+        '',
+      ].join('\n'),
+    );
+    expect(io.closed).toBe(true);
+  });
+
+  it('repete a pergunta quando a Chave de API vem em branco', async () => {
+    const io = buildIO(['', '', '', 'chave-valida', 'printer:POS-80', 'star']);
+    const exists = jest.fn().mockReturnValue(false);
+    const write = jest.fn().mockResolvedValue(undefined);
+
+    await ensureConfigured('/configs', io, exists, write);
+
+    expect(io.logs).toContain('Esse campo é obrigatório.');
+    expect(write).toHaveBeenCalledWith(
+      '/configs/.env',
+      expect.stringContaining('PRINT_API_KEY=chave-valida'),
+    );
+    expect(write).toHaveBeenCalledWith('/configs/.env', expect.stringContaining('PRINTER_TYPE=star'));
+  });
+
+  it('repete a pergunta quando o tipo da impressora é inválido', async () => {
+    const io = buildIO(['', 'chave', 'printer:POS-80', 'zebra', 'epson']);
+    const exists = jest.fn().mockReturnValue(false);
+    const write = jest.fn().mockResolvedValue(undefined);
+
+    await ensureConfigured('/configs', io, exists, write);
+
+    expect(io.logs).toContain('Digite "epson" ou "star".');
+    expect(write).toHaveBeenCalledWith('/configs/.env', expect.stringContaining('PRINTER_TYPE=epson'));
+  });
+
+  it('fecha a interface de I/O mesmo se a escrita falhar', async () => {
+    const io = buildIO(['', 'chave', 'printer:POS-80', '']);
+    const exists = jest.fn().mockReturnValue(false);
+    const write = jest.fn().mockRejectedValue(new Error('disco cheio'));
+
+    await expect(ensureConfigured('/configs', io, exists, write)).rejects.toThrow('disco cheio');
+    expect(io.closed).toBe(true);
+  });
+});

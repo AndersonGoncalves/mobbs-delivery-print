@@ -1,4 +1,7 @@
+import { config as loadDotenv } from 'dotenv';
+import { join } from 'path';
 import { loadConfig } from './config';
+import { resolveConfigDir, ensureConfigured } from './setup';
 import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
@@ -11,6 +14,12 @@ import { runPollCycle } from './pollCycle';
  * consulta/impressão demorar mais que o intervalo configurado.
  */
 async function main() {
+  /** specs/0141-instalador-bridge-impressao REQ-4/REQ-5 — primeiro uso sem `.env` ao lado do
+   * executável pergunta a configuração sozinho; com `.env` já presente, segue direto. */
+  const configDir = resolveConfigDir();
+  await ensureConfigured(configDir);
+  loadDotenv({ path: join(configDir, '.env') });
+
   const config = loadConfig();
   const bffClient = new BffClient(config);
   const printer = createPrinter(config);

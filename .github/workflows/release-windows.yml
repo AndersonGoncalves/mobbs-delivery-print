@@ -1,0 +1,48 @@
+name: Publish Windows executable
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-exe
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package Windows executable
+        run: npm run package:win
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Build mais recente
+          body: |
+            Build automático a partir do commit ${{ github.sha }}.
+            Baixe `mobbs-delivery-print-win.exe` abaixo (ou use o link estável
+            `.../releases/latest/download/mobbs-delivery-print-win.exe`).
+          prerelease: false
+          files: mobbs-delivery-print-win.exe
