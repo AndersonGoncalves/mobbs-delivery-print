@@ -16,6 +16,13 @@ repositório `mobbs-delivery-app`.
    pergunta a chave e a impressora na primeira execução.
 3. A cada pedido de delivery/retirada confirmado, este serviço consulta o BFF (no intervalo
    configurado na retaguarda, padrão 10s), imprime a comanda e confirma ao BFF que imprimiu.
+4. **specs/0147-impressao-manual-direta-bridge** — além disso, enquanto este serviço estiver
+   rodando, o botão "Imprimir" manual da retaguarda passa a usá-lo direto (sem diálogo de
+   impressão, sem esperar o próximo ciclo): o serviço escuta em
+   `http://127.0.0.1:48201/print-now`, só aceita chamadas da retaguarda oficial
+   (`https://bsdelivery.com.br`). Se a retaguarda não conseguir falar com ele (serviço fechado,
+   computador diferente), ela cai sozinha pro botão "Imprimir" de sempre — nenhuma configuração
+   extra é necessária.
 
 ## Instalação (Windows, sem precisar instalar nada)
 
@@ -95,4 +102,7 @@ npm run lint
 - `src/printer.ts` — converte as linhas do recibo (já formatadas pelo BFF) em comandos ESC/POS
   via [`node-thermal-printer`](https://github.com/Klemen1337/node-thermal-printer).
 - `src/pollCycle.ts` — um ciclo de consulta (testável, sem `setTimeout`).
-- `src/index.ts` — ponto de entrada: monta as peças acima e roda o laço de consulta.
+- `src/localServer.ts` — servidor HTTP local (`127.0.0.1:48201`) pro botão "Imprimir" manual da
+  retaguarda imprimir na hora, sem esperar o próximo ciclo (specs/0147).
+- `src/index.ts` — ponto de entrada: monta as peças acima, inicia o servidor local e roda o laço
+  de consulta.

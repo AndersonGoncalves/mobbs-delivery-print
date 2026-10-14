@@ -5,6 +5,7 @@ import { resolveConfigDir, ensureConfigured } from './setup';
 import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
+import { createLocalPrintServer, LOCAL_PRINT_SERVER_PORT } from './localServer';
 
 /**
  * specs/0139-impressao-automatica-bridge REQ-8 — roda em segundo plano, consultando o BFF no
@@ -24,7 +25,13 @@ async function main() {
   const bffClient = new BffClient(config);
   const printer = createPrinter(config);
 
+  /** specs/0147-impressao-manual-direta-bridge REQ-7 — roda em paralelo ao ciclo de consulta
+   * abaixo; o botão "Imprimir" manual da retaguarda chama isso direto, sem esperar o próximo
+   * ciclo automático. */
+  createLocalPrintServer(printer, config.apiKey);
+
   console.log('Serviço mobbs-delivery-print iniciado. Monitorando impressora e BFF...');
+  console.log(`Servidor local de impressão manual ouvindo em http://127.0.0.1:${LOCAL_PRINT_SERVER_PORT}`);
 
   let intervalSeconds = 10;
   async function tick() {
