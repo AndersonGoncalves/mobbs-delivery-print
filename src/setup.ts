@@ -40,6 +40,20 @@ async function askRequired(io: SetupIO, prompt: string): Promise<string> {
   }
 }
 
+/**
+ * specs/0149-prefixo-interface-impressora — achado testando com um usuário real: ele digitou só
+ * o nome da impressora ("MP-4200"), sem o prefixo `printer:` do exemplo no prompt. Sem esse
+ * prefixo, `node-thermal-printer` trata a resposta como caminho de arquivo (`fs.existsSync`), não
+ * como impressora do Windows — sempre "não encontrada", sem nunca chegar no driver de verdade.
+ * Completa sozinho quando a resposta não tem nenhum prefixo reconhecido (nem `scheme://`, nem
+ * caminho absoluto `/...` ou `\...` — caso de quem já sabe que quer um dispositivo/porta serial).
+ */
+export function normalizePrinterInterface(raw: string): string {
+  if (/^[a-z]+:\/\//i.test(raw) || raw.startsWith('printer:')) return raw;
+  if (raw.startsWith('/') || raw.startsWith('\\')) return raw;
+  return `printer:${raw}`;
+}
+
 async function askPrinterType(io: SetupIO): Promise<'epson' | 'star'> {
   for (;;) {
     const answer = (await io.question(`Tipo da impressora (epson/star) [${DEFAULT_PRINTER_TYPE}]: `))
@@ -86,10 +100,11 @@ export async function ensureConfigured(
       io,
       'Chave de API (copie em "Impressão automática" na retaguarda web): ',
     );
-    const printerInterface = await askRequired(
+    const printerInterfaceAnswer = await askRequired(
       io,
-      'Interface da impressora (ex.: printer:NomeDaImpressora ou tcp://192.168.0.100): ',
+      'Interface da impressora (nome dela como aparece no Windows, ex.: MP-4200, ou tcp://192.168.0.100 pra impressora de rede): ',
     );
+    const printerInterface = normalizePrinterInterface(printerInterfaceAnswer);
     const printerType = await askPrinterType(io);
 
     await write(envPath, buildEnvFileContents({ bffUrl, apiKey, printerInterface, printerType }));

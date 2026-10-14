@@ -1,4 +1,4 @@
-import { ensureConfigured, SetupIO } from './setup';
+import { ensureConfigured, normalizePrinterInterface, SetupIO } from './setup';
 
 function buildIO(answers: string[]): SetupIO & { questions: string[]; logs: string[]; closed: boolean } {
   const questions: string[] = [];
@@ -88,5 +88,38 @@ describe('ensureConfigured', () => {
 
     await expect(ensureConfigured('/configs', io, exists, write)).rejects.toThrow('disco cheio');
     expect(io.closed).toBe(true);
+  });
+
+  // specs/0149-prefixo-interface-impressora — achado com um usuário real: digitar só o nome da
+  // impressora (sem "printer:") faz a lib tratar como caminho de arquivo, nunca encontra a
+  // impressora de verdade.
+  it('completa "printer:" sozinho quando o usuário digita só o nome da impressora', async () => {
+    const io = buildIO(['', 'chave', 'MP-4200', '']);
+    const exists = jest.fn().mockReturnValue(false);
+    const write = jest.fn().mockResolvedValue(undefined);
+
+    await ensureConfigured('/configs', io, exists, write);
+
+    expect(write).toHaveBeenCalledWith('/configs/.env', expect.stringContaining('PRINTER_INTERFACE=printer:MP-4200'));
+  });
+});
+
+describe('normalizePrinterInterface', () => {
+  it('completa "printer:" quando a resposta não tem nenhum prefixo reconhecido', () => {
+    expect(normalizePrinterInterface('MP-4200')).toBe('printer:MP-4200');
+    expect(normalizePrinterInterface('MP-4200 TH')).toBe('printer:MP-4200 TH');
+  });
+
+  it('não mexe quando já tem o prefixo "printer:"', () => {
+    expect(normalizePrinterInterface('printer:MP-4200')).toBe('printer:MP-4200');
+  });
+
+  it('não mexe numa interface de rede (tcp://...)', () => {
+    expect(normalizePrinterInterface('tcp://192.168.0.100')).toBe('tcp://192.168.0.100');
+  });
+
+  it('não mexe num caminho de dispositivo absoluto (Linux/Windows)', () => {
+    expect(normalizePrinterInterface('/dev/usb/lp0')).toBe('/dev/usb/lp0');
+    expect(normalizePrinterInterface('\\\\.\\COM1')).toBe('\\\\.\\COM1');
   });
 });
