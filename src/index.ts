@@ -6,6 +6,7 @@ import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
 import { createLocalPrintServer } from './localServer';
+import { BUILD_COMMIT, BUILD_DATE } from './buildInfo';
 
 /**
  * specs/0139-impressao-automatica-bridge REQ-8 — roda em segundo plano, consultando o BFF no
@@ -15,6 +16,10 @@ import { createLocalPrintServer } from './localServer';
  * consulta/impressão demorar mais que o intervalo configurado.
  */
 async function main() {
+  /** specs/0148-versao-visivel-bridge REQ-1 — primeira linha, sempre: deixa claro se um `.exe`
+   * baixado é a versão mais recente ou uma cópia antiga em cache do navegador. */
+  console.log(`Versão: ${BUILD_COMMIT} (${BUILD_DATE})`);
+
   /** specs/0141-instalador-bridge-impressao REQ-4/REQ-5 — primeiro uso sem `.env` ao lado do
    * executável pergunta a configuração sozinho; com `.env` já presente, segue direto. */
   const configDir = resolveConfigDir();
