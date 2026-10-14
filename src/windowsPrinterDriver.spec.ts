@@ -11,9 +11,17 @@ jest.mock('fs', () => ({
   rmdirSync: (...args: unknown[]) => rmdirSync(...args),
 }));
 
-import { windowsPrinterDriver } from './windowsPrinterDriver';
+import { windowsPrinterDriver, getLastPrinterDriverError } from './windowsPrinterDriver';
 
-describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge)', () => {
+/** As chamadas reais vão todas via `-EncodedCommand` (specs/0146) — decodifica o argumento pra
+ * conseguir inspecionar o script PowerShell de verdade nos testes. */
+function decodedScriptFromCall(callIndex = 0): string {
+  const args = execFileSync.mock.calls[callIndex][1] as string[];
+  const encodedIndex = args.indexOf('-EncodedCommand');
+  return Buffer.from(args[encodedIndex + 1], 'base64').toString('utf16le');
+}
+
+describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs/0146-robustez-driver-powershell)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -23,62 +31,65 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge)', () 
   });
 
   it('getPrinter(nome) devolve status OK quando o PowerShell encontra a impressora', () => {
-    execFileSync.mockReturnValue(Buffer.from(''));
+    execFileSync.mockReturnValue('');
 
     const result = windowsPrinterDriver.getPrinter('MP-4200 TH');
 
     expect(result).toEqual({ status: ['OK'] });
-    expect(execFileSync).toHaveBeenCalledWith(
-      'powershell.exe',
-      expect.arrayContaining([expect.stringContaining("Get-Printer -Name 'MP-4200 TH'")]),
-      expect.any(Object),
-    );
+    expect(execFileSync).toHaveBeenCalledWith('powershell.exe', expect.arrayContaining(['-EncodedCommand']), expect.any(Object));
+    expect(decodedScriptFromCall()).toContain("Get-Printer -Name 'MP-4200 TH'");
+    expect(getLastPrinterDriverError()).toBeUndefined();
   });
 
-  it('getPrinter(nome) devolve null quando o PowerShell não encontra a impressora', () => {
+  it('getPrinter(nome) devolve null e guarda o motivo real quando o PowerShell falha', () => {
     execFileSync.mockImplementation(() => {
-      throw new Error('printer not found');
+      throw Object.assign(new Error('comando falhou'), { stderr: 'Get-Printer : No matching printers were found.' });
     });
 
     expect(windowsPrinterDriver.getPrinter('Inexistente')).toBeNull();
+    expect(getLastPrinterDriverError()).toBe('Get-Printer : No matching printers were found.');
   });
 
-  it('getPrinter escapa aspas simples no nome (evita quebrar o comando PowerShell)', () => {
-    execFileSync.mockReturnValue(Buffer.from(''));
+  it('getPrinter cai pra err.message quando não há stderr', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('ENOENT: powershell.exe not found');
+    });
+
+    windowsPrinterDriver.getPrinter('Qualquer');
+
+    expect(getLastPrinterDriverError()).toBe('ENOENT: powershell.exe not found');
+  });
+
+  it('getPrinter escapa aspas simples no nome (evita quebrar o script PowerShell)', () => {
+    execFileSync.mockReturnValue('');
 
     windowsPrinterDriver.getPrinter("Minha's Printer");
 
-    expect(execFileSync).toHaveBeenCalledWith(
-      'powershell.exe',
-      expect.arrayContaining([expect.stringContaining("Minha''s Printer")]),
-      expect.any(Object),
-    );
+    expect(decodedScriptFromCall()).toContain("Minha''s Printer");
   });
 
-  it('printDirect: grava o script e os bytes, manda pro PowerShell, e chama success', () => {
-    execFileSync.mockReturnValue(Buffer.from(''));
+  it('printDirect: grava os bytes, manda pro PowerShell via -EncodedCommand, e chama success', () => {
+    execFileSync.mockReturnValue('');
     const success = jest.fn();
     const error = jest.fn();
     const data = Buffer.from('ESC/POS bytes');
 
     windowsPrinterDriver.printDirect({ data, printer: 'MP-4200 TH', success, error });
 
-    expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining('raw-print.ps1'), expect.any(String), 'utf-8');
     expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining('job.bin'), data);
-    expect(execFileSync).toHaveBeenCalledWith(
-      'powershell.exe',
-      expect.arrayContaining(['-File', expect.stringContaining('raw-print.ps1'), '-PrinterName', 'MP-4200 TH']),
-      expect.any(Object),
-    );
+    expect(execFileSync).toHaveBeenCalledWith('powershell.exe', expect.arrayContaining(['-EncodedCommand']), expect.any(Object));
+    const script = decodedScriptFromCall();
+    expect(script).toContain("SendBytesToPrinter('MP-4200 TH'");
+    expect(script).toContain('job.bin');
     expect(success).toHaveBeenCalledWith('ok');
     expect(error).not.toHaveBeenCalled();
-    // limpeza best-effort dos arquivos temporários, mesmo em caso de sucesso.
-    expect(unlinkSync).toHaveBeenCalledTimes(2);
+    // limpeza best-effort do arquivo temporário de dados, mesmo em caso de sucesso.
+    expect(unlinkSync).toHaveBeenCalledTimes(1);
   });
 
-  it('printDirect: chama error quando o PowerShell falha, sem derrubar o processo', () => {
+  it('printDirect: chama error com o motivo real quando o PowerShell falha, sem derrubar o processo', () => {
     execFileSync.mockImplementation(() => {
-      throw new Error('WritePrinter falhou');
+      throw Object.assign(new Error('comando falhou'), { stderr: 'WritePrinter falhou (codigo 1801)' });
     });
     const success = jest.fn();
     const error = jest.fn();
@@ -86,8 +97,9 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge)', () 
     windowsPrinterDriver.printDirect({ data: Buffer.from('x'), printer: 'MP-4200 TH', success, error });
 
     expect(success).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message: 'WritePrinter falhou' }));
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message: 'WritePrinter falhou (codigo 1801)' }));
+    expect(getLastPrinterDriverError()).toBe('WritePrinter falhou (codigo 1801)');
     // limpeza acontece mesmo quando o PowerShell falha.
-    expect(unlinkSync).toHaveBeenCalledTimes(2);
+    expect(unlinkSync).toHaveBeenCalledTimes(1);
   });
 });

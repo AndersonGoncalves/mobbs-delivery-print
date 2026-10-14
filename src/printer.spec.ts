@@ -16,13 +16,20 @@ jest.mock('node-thermal-printer', () => ({
   types: { EPSON: 'epson', STAR: 'star' },
 }));
 
-import { windowsPrinterDriver } from './windowsPrinterDriver';
+const fakeWindowsPrinterDriver = { name: 'fake-windows-driver' };
+const getLastPrinterDriverErrorMock = jest.fn<string | undefined, []>();
+jest.mock('./windowsPrinterDriver', () => ({
+  windowsPrinterDriver: fakeWindowsPrinterDriver,
+  getLastPrinterDriverError: () => getLastPrinterDriverErrorMock(),
+}));
+
 import { createPrinter } from './printer';
 
 describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrinter.isPrinterConnected.mockResolvedValue(true);
+    getLastPrinterDriverErrorMock.mockReturnValue(undefined);
   });
 
   it('imprime cada linha, em negrito quando bold, e corta o papel no fim', async () => {
@@ -46,13 +53,28 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     expect(mockPrinter.execute).toHaveBeenCalled();
   });
 
-  it('REQ-10 — lança erro claro quando a impressora não está conectada, sem imprimir nada', async () => {
+  it('REQ-10 — lança erro claro quando a impressora não está conectada (resolve false), sem imprimir nada', async () => {
     mockPrinter.isPrinterConnected.mockResolvedValue(false);
     const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
 
     await expect(printer.print([{ text: 'ID PEDIDO: 38' }])).rejects.toThrow('printer:POS-80');
     expect(mockPrinter.println).not.toHaveBeenCalled();
     expect(mockPrinter.execute).not.toHaveBeenCalled();
+  });
+
+  it('specs/0146 — também lança erro claro quando isPrinterConnected rejeita (comportamento observado da lib, ver interfaces/printer.js)', async () => {
+    mockPrinter.isPrinterConnected.mockRejectedValue(false);
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await expect(printer.print([{ text: 'ID PEDIDO: 38' }])).rejects.toThrow('printer:POS-80');
+  });
+
+  it('specs/0146 — anexa o motivo real do PowerShell quando disponível, em vez de só a mensagem genérica', async () => {
+    mockPrinter.isPrinterConnected.mockResolvedValue(false);
+    getLastPrinterDriverErrorMock.mockReturnValue('Get-Printer: No matching printers found.');
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await expect(printer.print([{ text: 'ID PEDIDO: 38' }])).rejects.toThrow('Get-Printer: No matching printers found.');
   });
 });
 
@@ -65,7 +87,7 @@ describe('createPrinter — driver (specs/0144-driver-nativo-impressao-bridge RE
     createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
 
     expect(thermalPrinterConstructor).toHaveBeenCalledWith(
-      expect.objectContaining({ interface: 'printer:POS-80', driver: windowsPrinterDriver }),
+      expect.objectContaining({ interface: 'printer:POS-80', driver: fakeWindowsPrinterDriver }),
     );
   });
 

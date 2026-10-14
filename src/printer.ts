@@ -1,5 +1,5 @@
 import { printer as ThermalPrinter, types as PrinterTypes } from 'node-thermal-printer';
-import { windowsPrinterDriver } from './windowsPrinterDriver';
+import { windowsPrinterDriver, getLastPrinterDriverError } from './windowsPrinterDriver';
 import type { Config } from './config';
 import type { ReceiptLine } from './types';
 
@@ -32,9 +32,24 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
 
   return {
     async print(lines: ReceiptLine[]): Promise<void> {
-      const isConnected = await thermalPrinter.isPrinterConnected();
+      /**
+       * specs/0146-robustez-driver-powershell — `isPrinterConnected()` da lib ora resolve `false`,
+       * ora rejeita com o valor `false` (comportamento interno dela, não documentado de forma
+       * confiável) — o try/catch trata os dois casos igual, e anexa o motivo real do PowerShell
+       * (`getLastPrinterDriverError`) quando disponível, em vez de só um "não encontrada" genérico.
+       */
+      let isConnected: boolean;
+      try {
+        isConnected = await thermalPrinter.isPrinterConnected();
+      } catch {
+        isConnected = false;
+      }
       if (!isConnected) {
-        throw new Error(`Impressora não encontrada em "${config.printerInterface}" — confira PRINTER_INTERFACE no .env e se a impressora está ligada.`);
+        const detail = getLastPrinterDriverError();
+        throw new Error(
+          `Impressora não encontrada em "${config.printerInterface}" — confira PRINTER_INTERFACE no .env e se a impressora está ligada.` +
+            (detail ? ` Detalhe do PowerShell: ${detail}` : ''),
+        );
       }
 
       thermalPrinter.clear();

@@ -11,17 +11,22 @@ import { join } from 'path';
  * driver manda os bytes crus (ESC/POS) direto pra fila RAW da impressora via PowerShell + P/Invoke
  * de `winspool.drv` (técnica padrão da própria Microsoft pra impressão RAW em .NET/Windows — já
  * vem em qualquer Windows, sem instalar nada a mais, sem compilar nada no nosso lado).
+ *
+ * specs/0146-robustez-driver-powershell — sempre via `-EncodedCommand` (script inteiro em
+ * UTF-16LE/base64), nunca `-Command` com string solta: evita um problema clássico de escape de
+ * argumento do Windows (nome de impressora com espaço, ex. "MP-4200 TH", podia sair mal formado
+ * ao atravessar `child_process` -> linha de comando do `powershell.exe` -> parser do PowerShell —
+ * `Get-Printer "MP-4200 TH"` funcionava rodado à mão, mas falhava vindo do bridge). Com
+ * `-EncodedCommand`, nada disso é interpretado por quebra de argumento — só o PowerShell decodifica
+ * e interpreta o script.
  */
 
 // RawPrinterHelper — adaptação do exemplo oficial da Microsoft (KB322090, "How to send raw data
-// to a printer") pra PowerShell via `Add-Type`. `winspool.drv` é a API nativa do Windows pra fila
-// de impressão; `StartDocPrinter`/`WritePrinter` com `pDataType = "RAW"` envia os bytes sem
-// nenhum processamento/paginação do driver gráfico — exatamente o modo ESC/POS espera.
-const RAW_PRINT_SCRIPT = `
-param(
-  [Parameter(Mandatory=$true)][string]$PrinterName,
-  [Parameter(Mandatory=$true)][string]$FilePath
-)
+// to a printer"), definido uma vez via `Add-Type` dentro do script de cada chamada.
+// `winspool.drv` é a API nativa do Windows pra fila de impressão; `StartDocPrinter`/`WritePrinter`
+// com `pDataType = "RAW"` envia os bytes sem nenhum processamento/paginação do driver gráfico —
+// exatamente o modo ESC/POS espera.
+const RAW_PRINTER_HELPER_TYPE_DEF = `
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -89,32 +94,63 @@ public class MobbsRawPrinterHelper {
     }
 }
 "@
+`;
 
-$bytes = [System.IO.File]::ReadAllBytes($FilePath)
+function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function buildEncodedCommand(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+function runPowerShellScript(script: string): void {
+  execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', buildEncodedCommand(script)],
+    { windowsHide: true, encoding: 'utf-8' },
+  );
+}
+
+/** specs/0146 — mensagem real do PowerShell (via stderr), pra não esconder o motivo de verdade
+ * atrás de um "impressora não encontrada" genérico quando o problema é outro (nome inválido,
+ * driver sem suporte a RAW, permissão, etc.). */
+function describeError(err: unknown): string {
+  if (err && typeof err === 'object' && 'stderr' in err) {
+    const stderr = (err as { stderr?: string | Buffer }).stderr;
+    const text = stderr ? stderr.toString().trim() : '';
+    if (text) return text;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+let lastDriverError: string | undefined;
+
+/** Último erro real reportado pelo PowerShell — `printer.ts` usa isso pra compor uma mensagem de
+ * log útil em vez do genérico "impressora não encontrada". */
+export function getLastPrinterDriverError(): string | undefined {
+  return lastDriverError;
+}
+
+function sendRawBytes(printerName: string, data: Buffer): void {
+  const dir = mkdtempSync(join(tmpdir(), 'mobbs-delivery-print-'));
+  const dataPath = join(dir, 'job.bin');
+  try {
+    writeFileSync(dataPath, data);
+    const script = `
+${RAW_PRINTER_HELPER_TYPE_DEF}
+$bytes = [System.IO.File]::ReadAllBytes(${psQuote(dataPath)})
 $errorMessage = ""
-$ok = [MobbsRawPrinterHelper]::SendBytesToPrinter($PrinterName, $bytes, [ref]$errorMessage)
+$ok = [MobbsRawPrinterHelper]::SendBytesToPrinter(${psQuote(printerName)}, $bytes, [ref]$errorMessage)
 if (-not $ok) {
     Write-Error $errorMessage
     exit 1
 }
 exit 0
 `;
-
-function runPowerShell(args: string[]): void {
-  execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', ...args], { windowsHide: true });
-}
-
-function sendRawBytes(printerName: string, data: Buffer): void {
-  const dir = mkdtempSync(join(tmpdir(), 'mobbs-delivery-print-'));
-  const scriptPath = join(dir, 'raw-print.ps1');
-  const dataPath = join(dir, 'job.bin');
-  try {
-    writeFileSync(scriptPath, RAW_PRINT_SCRIPT, 'utf-8');
-    writeFileSync(dataPath, data);
-    runPowerShell(['-File', scriptPath, '-PrinterName', printerName, '-FilePath', dataPath]);
+    runPowerShellScript(script);
   } finally {
     try {
-      unlinkSync(scriptPath);
       unlinkSync(dataPath);
       rmdirSync(dir);
     } catch {
@@ -141,18 +177,23 @@ export const windowsPrinterDriver = {
   },
   getPrinter(name: string): { status: string[] } | null {
     try {
-      runPowerShell(['-Command', `Get-Printer -Name '${name.replace(/'/g, "''")}' | Out-Null`]);
+      runPowerShellScript(`Get-Printer -Name ${psQuote(name)} | Out-Null`);
+      lastDriverError = undefined;
       return { status: ['OK'] };
-    } catch {
+    } catch (err) {
+      lastDriverError = describeError(err);
       return null;
     }
   },
   printDirect(options: PrintDirectOptions): void {
     try {
       sendRawBytes(options.printer, options.data);
+      lastDriverError = undefined;
       options.success('ok');
     } catch (err) {
-      options.error(err instanceof Error ? err : new Error(String(err)));
+      const message = describeError(err);
+      lastDriverError = message;
+      options.error(new Error(message));
     }
   },
 };
