@@ -42,7 +42,12 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-export function createLocalPrintServer(printer: Printer, apiKey: string, log: (message: string) => void = console.log): Server {
+export function createLocalPrintServer(
+  printer: Printer,
+  apiKey: string,
+  log: (message: string) => void = console.log,
+  port: number = LOCAL_PRINT_SERVER_PORT,
+): Server {
   const server = createServer((req, res) => {
     setCorsHeaders(req, res);
 
@@ -80,6 +85,6 @@ export function createLocalPrintServer(printer: Printer, apiKey: string, log: (m
     })();
   });
 
-  server.listen(LOCAL_PRINT_SERVER_PORT, '127.0.0.1');
+  server.listen(port, '127.0.0.1');
   return server;
 }
