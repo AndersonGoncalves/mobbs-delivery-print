@@ -70,17 +70,46 @@ export function createLocalPrintServer(
       return;
     }
 
+    /**
+     * specs/0152-dedup-impressao-manual-automatica REQ-1 — se o navegador já desistiu de esperar
+     * a resposta (timeout do lado dele), não imprime: sem essa checagem, a impressão acontecia de
+     * qualquer jeito mesmo depois do navegador já ter caído pro fallback (`window.print()`) — "a
+     * página abre E o papel sai" pro mesmo clique.
+     *
+     * Importante: o evento certo pra isso é o de `res` (`ServerResponse`), não o de `req`
+     * (`IncomingMessage`) — `req` emite `close` assim que termina de *receber* o corpo da
+     * requisição (fim normal, acontece sempre), não só quando o cliente desiste de esperar a
+     * *resposta*. Usar `req.on('close', ...)` disparava `clientGaveUp` em toda requisição comum,
+     * travando a resposta pra sempre (bug encontrado nos próprios testes deste arquivo).
+     */
+    let clientGaveUp = false;
+    const onResponseClose = () => {
+      if (!res.writableEnded) clientGaveUp = true;
+    };
+    res.on('close', onResponseClose);
+
     void (async () => {
       try {
         const body = await readBody(req);
+        if (clientGaveUp) {
+          log('Impressão direta cancelada — o navegador já tinha desistido de esperar a resposta.');
+          return;
+        }
         const { lines } = JSON.parse(body) as { lines: ReceiptLine[] };
         await printer.print(lines);
+        if (clientGaveUp) {
+          log('Impressão concluída, mas o navegador já tinha desistido antes — sem como avisar mais.');
+          return;
+        }
         sendJson(res, 200, { ok: true });
         log('Impressão direta (manual) concluída.');
       } catch (error) {
+        if (clientGaveUp) return;
         const message = error instanceof Error ? error.message : String(error);
         log(`Erro na impressão direta (manual): ${message}`);
         sendJson(res, 500, { message });
+      } finally {
+        res.off('close', onResponseClose);
       }
     })();
   });

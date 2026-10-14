@@ -1,7 +1,10 @@
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import { existsSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * specs/0144-driver-nativo-impressao-bridge REQ-1 — `node-thermal-printer`'s `printer:Nome`
@@ -112,12 +115,25 @@ function buildEncodedCommand(script: string): string {
   return Buffer.from(script, 'utf16le').toString('base64');
 }
 
+const POWERSHELL_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
+
+/** Síncrono/bloqueante — só pra operações rápidas (`getPrinter`, compilar o assembly uma vez).
+ * `node-thermal-printer` chama `driver.getPrinter(...)` sem `await` (ver `interfaces/printer.js`
+ * da lib), então essa função precisa ser síncrona por contrato — não dá pra trocar por async ali. */
 function runPowerShellScript(script: string): void {
-  execFileSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', buildEncodedCommand(script)],
-    { windowsHide: true, encoding: 'utf-8' },
-  );
+  execFileSync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], { windowsHide: true, encoding: 'utf-8' });
+}
+
+/**
+ * specs/0152-dedup-impressao-manual-automatica REQ-1 — assíncrono/não-bloqueante, ao contrário de
+ * `runPowerShellScript`. `execFileSync` trava o processo Node inteiro (single-thread) enquanto o
+ * PowerShell roda — durante uma impressão do ciclo automático, isso deixava o servidor HTTP local
+ * (impressão manual, `specs/0147`) sem conseguir nem começar a atender uma requisição nova até o
+ * `execFileSync` anterior voltar, o que podia sozinho estourar o tempo de espera do navegador.
+ * `printDirect` (a operação lenta de verdade, mandar os bytes pra impressora) usa esta versão.
+ */
+async function runPowerShellScriptAsync(script: string): Promise<void> {
+  await execFileAsync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], { windowsHide: true, encoding: 'utf-8' });
 }
 
 /** specs/0150-cache-assembly-driver-powershell — compila o helper C# uma vez só, cacheado em
@@ -154,7 +170,7 @@ export function getLastPrinterDriverError(): string | undefined {
   return lastDriverError;
 }
 
-function sendRawBytes(printerName: string, data: Buffer): void {
+async function sendRawBytes(printerName: string, data: Buffer): Promise<void> {
   ensureAssemblyCompiled();
   const dir = mkdtempSync(join(tmpdir(), 'mobbs-delivery-print-'));
   const dataPath = join(dir, 'job.bin');
@@ -171,7 +187,7 @@ if (-not $ok) {
 }
 exit 0
 `;
-    runPowerShellScript(script);
+    await runPowerShellScriptAsync(script);
   } finally {
     try {
       unlinkSync(dataPath);
@@ -209,14 +225,20 @@ export const windowsPrinterDriver = {
     }
   },
   printDirect(options: PrintDirectOptions): void {
-    try {
-      sendRawBytes(options.printer, options.data);
-      lastDriverError = undefined;
-      options.success('ok');
-    } catch (err) {
-      const message = describeError(err);
-      lastDriverError = message;
-      options.error(new Error(message));
-    }
+    // specs/0152 REQ-1 — `sendRawBytes` é assíncrona agora; `printDirect` não pode ser `async`
+    // (contrato da lib é `success`/`error` por callback, não uma Promise retornada), então só
+    // dispara e resolve via esses callbacks quando terminar — sem bloquear o processo enquanto
+    // isso roda, diferente de antes.
+    sendRawBytes(options.printer, options.data).then(
+      () => {
+        lastDriverError = undefined;
+        options.success('ok');
+      },
+      (err: unknown) => {
+        const message = describeError(err);
+        lastDriverError = message;
+        options.error(new Error(message));
+      },
+    );
   },
 };
