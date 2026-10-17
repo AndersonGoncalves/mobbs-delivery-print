@@ -89,7 +89,7 @@ mobbs-delivery-print` (reiniciar, ex. depois de mudar o `.env`).
 
 ```bash
 npm run dev     # roda com reinício automático a cada mudança de código
-npm test        # testes (sem precisar de impressora/BFP reais — tudo mockado)
+npm test        # testes (sem precisar de impressora/BFP reais — tudo mockado; ver TESTES.md)
 npm run lint
 ```
 
