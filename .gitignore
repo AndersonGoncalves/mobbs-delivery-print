@@ -4,3 +4,4 @@ coverage/
 .env
 *.log
 *.exe
+mobbs-delivery-print-linux

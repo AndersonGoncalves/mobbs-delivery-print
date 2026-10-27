@@ -27,8 +27,8 @@ repositório `mobbs-delivery-app`.
 ## Instalação (Windows, sem precisar instalar nada)
 
 specs/0141-instalador-bridge-impressao — a forma recomendada pra quem só quer usar, sem mexer em
-código: baixe o executável pronto, direto da retaguarda web (`/painel/auto-print`, botão "Baixar o
-programa de impressão") ou direto do link estável:
+código: baixe o executável pronto, direto da retaguarda web (`/painel/auto-print`, botão "Baixar
+para Windows") ou direto do link estável:
 
 ```text
 https://github.com/AndersonGoncalves/mobbs-delivery-print/releases/latest/download/mobbs-delivery-print-win.exe
@@ -47,6 +47,45 @@ Pra deixar rodando sempre, sem precisar abrir manualmente: crie um atalho do `.e
 pasta de Inicializar do Windows (`Win+R` → `shell:startup`) — ele abre sozinho (minimizado na
 bandeja não é suportado nesta versão; fica uma janela de terminal aberta, que não deve ser
 fechada).
+
+## Instalação (Linux, sem precisar instalar nada)
+
+specs/0142-instalador-bridge-impressao-linux — mesmo mecanismo do Windows acima (repo público,
+link estável, setup interativo), mas o fluxo de rodar um binário baixado é diferente no Linux.
+Baixe pela retaguarda web (`/painel/auto-print`, botão "Baixar para Linux") ou direto do link
+estável:
+
+```text
+https://github.com/AndersonGoncalves/mobbs-delivery-print/releases/latest/download/mobbs-delivery-print-linux
+```
+
+Esse link sempre aponta pra versão mais recente. Diferente do `.exe` do Windows, dar duplo clique
+não basta: por padrão, o gerenciador de arquivos (Nautilus/GNOME, Dolphin/KDE) abre um binário
+baixado como texto, ou pede pra marcar "Permitir executar como programa" nas propriedades do
+arquivo — e o binário baixado não vem com permissão de execução. Duas formas de rodar:
+
+- **Pelo terminal** (recomendado): `chmod +x mobbs-delivery-print-linux && ./mobbs-delivery-print-linux`
+- **Pelo gerenciador de arquivos**: clique direito no arquivo → Propriedades → aba Permissões →
+  marque "Permitir executar o arquivo como programa" → dê duplo clique nele.
+
+Na primeira execução, ele pergunta os mesmos campos do Windows (URL do BFF, Chave de API,
+interface e tipo da impressora) e grava o mesmo `.env` ao lado do binário; nas próximas vezes, não
+pergunta mais nada.
+
+Pra deixar rodando sempre, sem precisar abrir manualmente: não existe uma "pasta Inicializar"
+equivalente no Linux — crie um atalho `.desktop` em `~/.config/autostart/` (ex.
+`~/.config/autostart/mobbs-delivery-print.desktop`) apontando pro caminho completo do binário:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=mobbs-delivery-print
+Exec=/caminho/completo/para/mobbs-delivery-print-linux
+Terminal=true
+```
+
+Ele abre sozinho ao entrar na sessão gráfica (a janela de terminal fica aberta, não deve ser
+fechada — mesma limitação do Windows acima).
 
 ## Instalação a partir do código-fonte (desenvolvimento)
 

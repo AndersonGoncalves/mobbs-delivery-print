@@ -1,4 +1,4 @@
-name: Publish Windows executable
+name: Publish executables
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-windows-exe
+  group: release-executables
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +45,11 @@ jobs:
       - name: Package Windows executable
         run: npm run package:win
 
+      # specs/0142-instalador-bridge-impressao-linux REQ-1 — mesmo runner ubuntu-latest já builda
+      # os dois alvos (node20-win-x64/node20-linux-x64) sem binding nativo, sem job separado.
+      - name: Package Linux executable
+        run: npm run package:linux
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -52,7 +57,11 @@ jobs:
           name: Build mais recente
           body: |
             Build automático a partir do commit ${{ github.sha }}.
-            Baixe `mobbs-delivery-print-win.exe` abaixo (ou use o link estável
-            `.../releases/latest/download/mobbs-delivery-print-win.exe`).
+            Baixe `mobbs-delivery-print-win.exe` (Windows) ou `mobbs-delivery-print-linux`
+            (Linux) abaixo, ou use os links estáveis:
+            - `.../releases/latest/download/mobbs-delivery-print-win.exe`
+            - `.../releases/latest/download/mobbs-delivery-print-linux`
           prerelease: false
-          files: mobbs-delivery-print-win.exe
+          files: |
+            mobbs-delivery-print-win.exe
+            mobbs-delivery-print-linux
