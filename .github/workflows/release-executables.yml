@@ -1,13 +1,15 @@
 name: Publish executables
 
+# specs/0141/0142-instalador-bridge-impressao(-linux) (revisão 2026-10-29) — destino muda de
+# GitHub Release pra S3 (mesmo bucket público `mobbs-delivery-images` já usado pelos apps
+# Flutter, specs/0191), pelo mesmo motivo: o link de Release expunha o nome/endereço do
+# repositório ao passar o mouse no botão de baixar.
+
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 concurrency:
   group: release-executables
@@ -50,18 +52,14 @@ jobs:
       - name: Package Linux executable
         run: npm run package:linux
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          tag_name: latest
-          name: Build mais recente
-          body: |
-            Build automático a partir do commit ${{ github.sha }}.
-            Baixe `mobbs-delivery-print-win.exe` (Windows) ou `mobbs-delivery-print-linux`
-            (Linux) abaixo, ou use os links estáveis:
-            - `.../releases/latest/download/mobbs-delivery-print-win.exe`
-            - `.../releases/latest/download/mobbs-delivery-print-linux`
-          prerelease: false
-          files: |
-            mobbs-delivery-print-win.exe
-            mobbs-delivery-print-linux
+          aws-access-key-id: ${{ secrets.APK_S3_UPLOAD_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.APK_S3_UPLOAD_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Publish to S3
+        run: |
+          aws s3 cp mobbs-delivery-print-win.exe s3://mobbs-delivery-images/apks/mobbs-delivery-print-win.exe
+          aws s3 cp mobbs-delivery-print-linux s3://mobbs-delivery-images/apks/mobbs-delivery-print-linux
