@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Bloqueia push direto na branch "main" neste repositório.
+#
+# docs/process/git-workflow.md (mobbs-delivery-app) — enquanto a branch protection do GitHub não
+# está disponível nos repositórios privados (GitHub Free não libera em repositório privado, só
+# GitHub Pro resolve isso), este hook local é a rede de segurança contra push acidental na main
+# por hábito (o padrão dos últimos meses deste projeto foi sempre push direto na main).
+#
+# Instalação (uma vez por clone/máquina — não é automático, o git não ativa hooks sozinho por
+# segurança): `git config core.hooksPath .githooks`
+#
+# Pra forçar um push na main mesmo assim (uso excepcional, deliberado): `git push --no-verify`.
+
+protected_branch='main'
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/$protected_branch" ]]; then
+    echo "" >&2
+    echo "Bloqueado: push direto em '$protected_branch' não é permitido neste repositório." >&2
+    echo "Trabalhe numa branch de feature a partir de 'development' e abra PR, ou promova" >&2
+    echo "development -> main deliberadamente." >&2
+    echo "" >&2
+    echo "Pra forçar mesmo assim (uso excepcional): git push --no-verify" >&2
+    echo "" >&2
+    exit 1
+  fi
+done
+
+exit 0
