@@ -42,9 +42,14 @@ jobs:
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           BUILD_DATE=$(date -u +"%d/%m/%Y %H:%M UTC")
+          # specs/0200-build-number-automatico-deploy — mesmo esquema do app/web/bff: X.Y.Z do
+          # package.json continua manual, o número depois do "+" é sempre a contagem de commits.
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          VERSION=$(node -p "require('./package.json').version")
           cat > src/buildInfo.ts <<EOF
           export const BUILD_COMMIT = '${SHORT_SHA}';
           export const BUILD_DATE = '${BUILD_DATE}';
+          export const BUILD_VERSION = '${VERSION}+${BUILD_NUMBER}';
           EOF
 
       - name: Build

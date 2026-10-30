@@ -7,7 +7,7 @@ import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
 import { createLocalPrintServer } from './localServer';
 import { ensureAssemblyCompiled } from './windowsPrinterDriver';
-import { BUILD_COMMIT, BUILD_DATE } from './buildInfo';
+import { BUILD_COMMIT, BUILD_DATE, BUILD_VERSION } from './buildInfo';
 
 /**
  * specs/0139-impressao-automatica-bridge REQ-8 — roda em segundo plano, consultando o BFF no
@@ -18,8 +18,9 @@ import { BUILD_COMMIT, BUILD_DATE } from './buildInfo';
  */
 async function main() {
   /** specs/0148-versao-visivel-bridge REQ-1 — primeira linha, sempre: deixa claro se um `.exe`
-   * baixado é a versão mais recente ou uma cópia antiga em cache do navegador. */
-  console.log(`Versão: ${BUILD_COMMIT} (${BUILD_DATE})`);
+   * baixado é a versão mais recente ou uma cópia antiga em cache do navegador.
+   * specs/0200-build-number-automatico-deploy — BUILD_VERSION (X.Y.Z+contagem de commits) junto. */
+  console.log(`Versão: ${BUILD_VERSION} — ${BUILD_COMMIT} (${BUILD_DATE})`);
 
   /** specs/0141-instalador-bridge-impressao REQ-4/REQ-5 — primeiro uso sem `.env` ao lado do
    * executável pergunta a configuração sozinho; com `.env` já presente, segue direto. */
