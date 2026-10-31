@@ -170,6 +170,54 @@ export function getLastPrinterDriverError(): string | undefined {
   return lastDriverError;
 }
 
+// Achado da auditoria pré-produção (31/10/2026) — "checagem de impressora ainda é síncrona e
+// bloqueia o servidor de impressão manual": `undefined` = ainda não checou nenhuma vez desde que
+// o bridge subiu; depois da primeira checagem, sempre um valor concreto (`{status}` ou `null`),
+// atualizado só em segundo plano a partir daí — `getPrinter()` abaixo nunca mais paga o custo
+// síncrono de novo.
+let cachedPrinterStatus: { status: string[] } | null | undefined;
+let refreshInFlight: Promise<void> | null = null;
+
+function applyPrinterCheckResult(ok: boolean, err?: unknown): void {
+  if (ok) {
+    cachedPrinterStatus = { status: ['OK'] };
+    lastDriverError = undefined;
+  } else {
+    cachedPrinterStatus = null;
+    lastDriverError = describeError(err);
+  }
+}
+
+/** Mesma checagem de sempre (`Get-Printer`), só que via PowerShell assíncrono — nunca bloqueia o
+ * processo Node enquanto roda. `refreshInFlight` evita disparar duas checagens em paralelo se
+ * chegar mais de uma impressão antes da anterior terminar. */
+function refreshPrinterStatusAsync(name: string): Promise<void> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = runPowerShellScriptAsync(`Get-Printer -Name ${psQuote(name)} | Out-Null`)
+    .then(() => applyPrinterCheckResult(true))
+    .catch((err: unknown) => applyPrinterCheckResult(false, err))
+    .finally(() => {
+      refreshInFlight = null;
+    });
+  return refreshInFlight;
+}
+
+/** Chamado proativamente em `index.ts`, mesmo padrão de `ensureAssemblyCompiled` — dispara a
+ * primeira checagem de conectividade já na inicialização, em segundo plano (sem bloquear a subida
+ * do bridge), pra que o cache já esteja preenchido quando a primeira impressão de verdade chegar
+ * e `getPrinter()` nunca precise cair no fallback síncrono abaixo. */
+export function warmUpPrinterConnectivity(name: string): void {
+  void refreshPrinterStatusAsync(name);
+}
+
+/** Só para testes — o cache é módulo-level (sobrevive entre `it()` do mesmo arquivo); cada
+ * cenário de `getPrinter()` espera uma checagem síncrona fresca, não o resultado de um teste
+ * anterior. */
+export function resetPrinterConnectivityCacheForTests(): void {
+  cachedPrinterStatus = undefined;
+  refreshInFlight = null;
+}
+
 async function sendRawBytes(printerName: string, data: Buffer): Promise<void> {
   ensureAssemblyCompiled();
   const dir = mkdtempSync(join(tmpdir(), 'mobbs-delivery-print-'));
@@ -215,14 +263,28 @@ export const windowsPrinterDriver = {
     return [];
   },
   getPrinter(name: string): { status: string[] } | null {
-    try {
-      runPowerShellScript(`Get-Printer -Name ${psQuote(name)} | Out-Null`);
-      lastDriverError = undefined;
-      return { status: ['OK'] };
-    } catch (err) {
-      lastDriverError = describeError(err);
-      return null;
+    // Achado da auditoria pré-produção (31/10/2026) — item 1 "checagem de impressora ainda é
+    // síncrona e bloqueia o servidor de impressão manual": contrato da lib exige retorno
+    // síncrono aqui (`node-thermal-printer` chama `driver.getPrinter(...)` sem `await`, ver
+    // `interfaces/printer.js`), então a checagem de verdade sempre roda em segundo plano
+    // (`refreshPrinterStatusAsync`, via PowerShell assíncrono) — esta função só lê o último
+    // resultado já conhecido, nunca bloqueia o processo esperando o PowerShell responder.
+    if (cachedPrinterStatus === undefined) {
+      // Única situação em que ainda paga o custo síncrono de verdade: a primeiríssima checagem
+      // desde que o bridge subiu, se o warm-up de `index.ts` ainda não tiver terminado (ou não
+      // tiver rodado — melhor-esforço, mesmo padrão de `ensureAssemblyCompiled`).
+      try {
+        runPowerShellScript(`Get-Printer -Name ${psQuote(name)} | Out-Null`);
+        applyPrinterCheckResult(true);
+      } catch (err) {
+        applyPrinterCheckResult(false, err);
+      }
+    } else {
+      // Já tem cache — responde na hora e dispara uma atualização em paralelo, sem esperar por
+      // ela; a próxima chamada já vê o resultado mais recente.
+      void refreshPrinterStatusAsync(name);
     }
+    return cachedPrinterStatus ?? null;
   },
   printDirect(options: PrintDirectOptions): void {
     // specs/0152 REQ-1 — `sendRawBytes` é assíncrona agora; `printDirect` não pode ser `async`
