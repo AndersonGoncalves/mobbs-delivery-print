@@ -256,3 +256,67 @@ describe('ensureAssemblyCompiled (specs/0150-cache-assembly-driver-powershell)',
     expect(decodedAsyncScriptFromCall(0)).toContain('Add-Type -Path');
   });
 });
+
+// Achado crítico da auditoria pós-merge (31/10/2026) — "execFileSync/execFile pro PowerShell
+// sem timeout em lugar nenhum": sem isso, um PowerShell travado (spooler em estado ruim,
+// antivírus interceptando, etc.) nunca retornava nem lançava — travava o processo inteiro
+// (síncrono) ou parava a impressão automática silenciosamente pra sempre (assíncrono).
+describe('timeout do PowerShell (achado crítico de auditoria, 2026-10-31)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    existsSync.mockReturnValue(true);
+    resetPrinterConnectivityCacheForTests();
+  });
+
+  it('getPrinter() (1ª checagem síncrona) passa timeout e killSignal pro execFileSync — nunca espera pra sempre', () => {
+    execFileSync.mockReturnValue('');
+
+    windowsPrinterDriver.getPrinter('MP-4200 TH');
+
+    const options = execFileSync.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
+  });
+
+  it('getPrinter() (1ª checagem síncrona): execFileSync estourando o timeout (ETIMEDOUT) é tratado como falha normal, não propaga', () => {
+    const timeoutError = Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
+    execFileSync.mockImplementation(() => {
+      throw timeoutError;
+    });
+
+    const result = windowsPrinterDriver.getPrinter('MP-4200 TH');
+
+    expect(result).toBeNull();
+    expect(getLastPrinterDriverError()).toContain('timed out');
+  });
+
+  it('sendRawBytes (printDirect) passa timeout e killSignal pro execFile — ciclo de impressão automática nunca fica parado pra sempre', async () => {
+    mockExecFileSuccess();
+
+    await runPrintDirect(Buffer.from('x'), 'MP-4200 TH');
+
+    const options = execFile.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
+  });
+
+  it('sendRawBytes (printDirect): execFile estourando o timeout chama error(), não fica pendurado', async () => {
+    const timeoutError = Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
+    mockExecFileFailure(timeoutError);
+
+    const result = await runPrintDirect(Buffer.from('x'), 'MP-4200 TH');
+
+    expect(result).toEqual({ ok: false, message: expect.stringContaining('timed out') });
+  });
+
+  it('ensureAssemblyCompiled passa timeout e killSignal pro execFileSync', () => {
+    existsSync.mockReturnValue(false);
+    execFileSync.mockReturnValue('');
+
+    ensureAssemblyCompiled();
+
+    const options = execFileSync.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
+  });
+});

@@ -117,11 +117,31 @@ function buildEncodedCommand(script: string): string {
 
 const POWERSHELL_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'];
 
+// Achado crítico da auditoria pós-merge (31/10/2026) — "execFileSync/execFile pro PowerShell
+// sem timeout em lugar nenhum": sem isso, um `powershell.exe` travado (spooler em estado ruim,
+// antivírus interceptando o processo, PowerShell corrompido) nunca retornava nem lançava — a
+// chamada síncrona travava o processo Node INTEIRO pra sempre, e a assíncrona deixava o ciclo de
+// impressão automática parado silenciosamente pra sempre (o `tick()` nunca reagendava). Processo
+// roda 24/7 sem supervisão — exigia reinício manual no restaurante. Checagem de conectividade
+// (`Get-Printer`) é uma query rápida — teto curto, não vale travar por mais que isso. Compilar o
+// assembly e mandar a impressão de verdade podem legitimamente levar alguns segundos — teto mais
+// folgado, mas nunca infinito.
+const POWERSHELL_CHECK_TIMEOUT_MS = 10_000;
+const POWERSHELL_PRINT_TIMEOUT_MS = 30_000;
+
 /** Síncrono/bloqueante — só pra operações rápidas (`getPrinter`, compilar o assembly uma vez).
  * `node-thermal-printer` chama `driver.getPrinter(...)` sem `await` (ver `interfaces/printer.js`
- * da lib), então essa função precisa ser síncrona por contrato — não dá pra trocar por async ali. */
-function runPowerShellScript(script: string): void {
-  execFileSync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], { windowsHide: true, encoding: 'utf-8' });
+ * da lib), então essa função precisa ser síncrona por contrato — não dá pra trocar por async ali.
+ * `timeoutMs`/`SIGKILL` — ver achado crítico acima: sem isso, um PowerShell travado travava o
+ * processo inteiro pra sempre; `execFileSync` lança (`ETIMEDOUT`) se estourar o prazo, em vez de
+ * ficar esperando. */
+function runPowerShellScript(script: string, timeoutMs: number): void {
+  execFileSync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], {
+    windowsHide: true,
+    encoding: 'utf-8',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  });
 }
 
 /**
@@ -131,9 +151,17 @@ function runPowerShellScript(script: string): void {
  * (impressão manual, `specs/0147`) sem conseguir nem começar a atender uma requisição nova até o
  * `execFileSync` anterior voltar, o que podia sozinho estourar o tempo de espera do navegador.
  * `printDirect` (a operação lenta de verdade, mandar os bytes pra impressora) usa esta versão.
+ * `timeoutMs`/`SIGKILL` — mesmo achado crítico do timeout acima: sem isso, um PowerShell travado
+ * nunca rejeitava a Promise, e o ciclo de impressão automática (`tick()`, `index.ts`) nunca mais
+ * reagendava — parava de consultar o BFF pra sempre, silenciosamente.
  */
-async function runPowerShellScriptAsync(script: string): Promise<void> {
-  await execFileAsync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], { windowsHide: true, encoding: 'utf-8' });
+async function runPowerShellScriptAsync(script: string, timeoutMs: number): Promise<void> {
+  await execFileAsync('powershell.exe', [...POWERSHELL_ARGS, buildEncodedCommand(script)], {
+    windowsHide: true,
+    encoding: 'utf-8',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+  });
 }
 
 /** specs/0150-cache-assembly-driver-powershell — compila o helper C# uma vez só, cacheado em
@@ -147,7 +175,7 @@ Add-Type -OutputAssembly ${psQuote(ASSEMBLY_PATH)} -OutputType Library -TypeDefi
 ${RAW_PRINTER_HELPER_CSHARP}
 "@
 `;
-  runPowerShellScript(compileScript);
+  runPowerShellScript(compileScript, POWERSHELL_PRINT_TIMEOUT_MS);
 }
 
 /** specs/0146 — mensagem real do PowerShell (via stderr), pra não esconder o motivo de verdade
@@ -193,7 +221,7 @@ function applyPrinterCheckResult(ok: boolean, err?: unknown): void {
  * chegar mais de uma impressão antes da anterior terminar. */
 function refreshPrinterStatusAsync(name: string): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = runPowerShellScriptAsync(`Get-Printer -Name ${psQuote(name)} | Out-Null`)
+  refreshInFlight = runPowerShellScriptAsync(`Get-Printer -Name ${psQuote(name)} | Out-Null`, POWERSHELL_CHECK_TIMEOUT_MS)
     .then(() => applyPrinterCheckResult(true))
     .catch((err: unknown) => applyPrinterCheckResult(false, err))
     .finally(() => {
@@ -235,7 +263,7 @@ if (-not $ok) {
 }
 exit 0
 `;
-    await runPowerShellScriptAsync(script);
+    await runPowerShellScriptAsync(script, POWERSHELL_PRINT_TIMEOUT_MS);
   } finally {
     try {
       unlinkSync(dataPath);
@@ -274,7 +302,7 @@ export const windowsPrinterDriver = {
       // desde que o bridge subiu, se o warm-up de `index.ts` ainda não tiver terminado (ou não
       // tiver rodado — melhor-esforço, mesmo padrão de `ensureAssemblyCompiled`).
       try {
-        runPowerShellScript(`Get-Printer -Name ${psQuote(name)} | Out-Null`);
+        runPowerShellScript(`Get-Printer -Name ${psQuote(name)} | Out-Null`, POWERSHELL_CHECK_TIMEOUT_MS);
         applyPrinterCheckResult(true);
       } catch (err) {
         applyPrinterCheckResult(false, err);
