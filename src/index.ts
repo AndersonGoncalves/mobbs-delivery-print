@@ -6,7 +6,8 @@ import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
 import { createLocalPrintServer } from './localServer';
-import { ensureAssemblyCompiled } from './windowsPrinterDriver';
+import { sanitizePollIntervalSeconds } from './pollIntervalSeconds';
+import { ensureAssemblyCompiled, warmUpPrinterConnectivity } from './windowsPrinterDriver';
 import { BUILD_COMMIT, BUILD_DATE, BUILD_VERSION } from './buildInfo';
 
 /**
@@ -44,6 +45,14 @@ async function main() {
     } catch (error) {
       console.error(`Aviso: não foi possível preparar o driver de impressão de antemão (${error instanceof Error ? error.message : String(error)}) — vai tentar de novo na primeira impressão.`);
     }
+
+    /** Achado da auditoria pré-produção (31/10/2026) — "checagem de impressora ainda é síncrona
+     * e bloqueia o servidor de impressão manual": dispara a primeira checagem de conectividade
+     * já aqui, em segundo plano (não bloqueia a subida do bridge) — assim, quando a primeira
+     * impressão de verdade (manual ou automática) chegar, `getPrinter()` já tem cache e nunca
+     * precisa do fallback síncrono. Mesmo nome que `node-thermal-printer` extrai de
+     * `printer:Nome` (ver `getInterface`, `interfaces/index.js` da lib). */
+    warmUpPrinterConnectivity(config.printerInterface.replace(/^printer:/i, ''));
   }
 
   /** specs/0147-impressao-manual-direta-bridge REQ-7 — roda em paralelo ao ciclo de consulta
@@ -58,7 +67,9 @@ async function main() {
   async function tick() {
     try {
       const result = await runPollCycle(bffClient, printer);
-      intervalSeconds = result.pollIntervalSeconds;
+      // Achado de auditoria pré-produção (01/11/2026) — "pollIntervalSeconds vindo do BFF não é
+      // validado": um valor malformado (0, negativo, NaN) martelava o BFF sem pausa alguma.
+      intervalSeconds = sanitizePollIntervalSeconds(result.pollIntervalSeconds, intervalSeconds);
     } catch (error) {
       console.error(`Erro inesperado consultando o BFF: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

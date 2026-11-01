@@ -17,7 +17,13 @@ jest.mock('fs', () => ({
   existsSync: (...args: unknown[]) => existsSync(...args),
 }));
 
-import { windowsPrinterDriver, getLastPrinterDriverError, ensureAssemblyCompiled } from './windowsPrinterDriver';
+import {
+  windowsPrinterDriver,
+  getLastPrinterDriverError,
+  ensureAssemblyCompiled,
+  warmUpPrinterConnectivity,
+  resetPrinterConnectivityCacheForTests,
+} from './windowsPrinterDriver';
 
 /** As chamadas reais vão todas via `-EncodedCommand` (specs/0146) — decodifica o argumento pra
  * conseguir inspecionar o script PowerShell de verdade nos testes. */
@@ -32,6 +38,13 @@ function decodedSyncScriptFromCall(callIndex = 0): string {
 
 function decodedAsyncScriptFromCall(callIndex = 0): string {
   return decodeScript(execFile.mock.calls[callIndex][1] as string[]);
+}
+
+/** Espera todas as microtasks pendentes resolverem (a cadeia `promisify(execFile).then().catch()
+ * .finally()` de `refreshPrinterStatusAsync` tem mais de um "tick") — mais confiável do que
+ * contar quantos `await Promise.resolve()` bastam. */
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 /** Simula o `execFile` (callback) por trás de `util.promisify` — sucesso por padrão; testes de
@@ -68,6 +81,10 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs
     // comum após o warm-up na inicialização); testes específicos de `ensureAssemblyCompiled`
     // sobrescrevem isso.
     existsSync.mockReturnValue(true);
+    // Achado da auditoria pré-produção (31/10/2026) — o cache de conectividade é módulo-level
+    // (sobrevive entre `it()` deste arquivo); cada cenário abaixo espera uma checagem síncrona
+    // fresca, não o resultado cacheado de um teste anterior.
+    resetPrinterConnectivityCacheForTests();
   });
 
   it('getPrinters() devolve lista vazia (nunca usado — seleção sempre por nome explícito)', () => {
@@ -110,6 +127,61 @@ describe('windowsPrinterDriver (specs/0144-driver-nativo-impressao-bridge, specs
     windowsPrinterDriver.getPrinter("Minha's Printer");
 
     expect(decodedSyncScriptFromCall()).toContain("Minha''s Printer");
+  });
+
+  // Achado da auditoria pré-produção (31/10/2026) — item 1 "checagem de impressora ainda é
+  // síncrona e bloqueia o servidor de impressão manual".
+  it('getPrinter: só a primeira chamada roda síncrono (execFileSync) — as próximas respondem do cache e atualizam em segundo plano (execFile)', async () => {
+    execFileSync.mockReturnValue('');
+    mockExecFileSuccess();
+
+    const first = windowsPrinterDriver.getPrinter('MP-4200 TH');
+    expect(first).toEqual({ status: ['OK'] });
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+    expect(execFile).not.toHaveBeenCalled();
+
+    const second = windowsPrinterDriver.getPrinter('MP-4200 TH');
+    expect(second).toEqual({ status: ['OK'] }); // cache, nenhuma chamada nova ainda terminou
+    expect(execFileSync).toHaveBeenCalledTimes(1); // nunca mais síncrono
+    expect(execFile).toHaveBeenCalledTimes(1); // atualização em segundo plano, disparada
+    await flushAsync(); // deixa a promise da atualização em segundo plano resolver
+    expect(decodedAsyncScriptFromCall()).toContain("Get-Printer -Name 'MP-4200 TH'");
+  });
+
+  it('getPrinter: chamadas simultâneas não disparam duas checagens em segundo plano em paralelo', () => {
+    execFileSync.mockReturnValue('');
+    mockExecFileSuccess();
+    windowsPrinterDriver.getPrinter('MP-4200 TH'); // popula o cache (síncrono)
+
+    windowsPrinterDriver.getPrinter('MP-4200 TH');
+    windowsPrinterDriver.getPrinter('MP-4200 TH');
+
+    expect(execFile).toHaveBeenCalledTimes(1); // só uma atualização em voo, não uma por chamada
+  });
+
+  it('getPrinter: depois que uma atualização em segundo plano falha, o cache passa a refletir a falha (sem travar nada)', async () => {
+    execFileSync.mockReturnValue('');
+    windowsPrinterDriver.getPrinter('MP-4200 TH'); // popula o cache com sucesso (síncrono)
+    mockExecFileFailure(Object.assign(new Error('falhou'), { stderr: 'Get-Printer : No matching printers were found.' }));
+
+    windowsPrinterDriver.getPrinter('MP-4200 TH'); // dispara a atualização (agora configurada pra falhar)
+    await flushAsync();
+
+    expect(windowsPrinterDriver.getPrinter('MP-4200 TH')).toBeNull();
+    expect(getLastPrinterDriverError()).toBe('Get-Printer : No matching printers were found.');
+  });
+
+  it('warmUpPrinterConnectivity: preenche o cache em segundo plano (execFile) — getPrinter() depois nunca bloqueia', async () => {
+    mockExecFileSuccess();
+
+    warmUpPrinterConnectivity('MP-4200 TH');
+
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledTimes(1);
+    await flushAsync();
+
+    expect(windowsPrinterDriver.getPrinter('MP-4200 TH')).toEqual({ status: ['OK'] });
+    expect(execFileSync).not.toHaveBeenCalled(); // o warm-up já tinha preenchido o cache
   });
 
   it('printDirect: grava os bytes, manda pro PowerShell via -EncodedCommand (assíncrono), e chama success', async () => {
@@ -182,5 +254,69 @@ describe('ensureAssemblyCompiled (specs/0150-cache-assembly-driver-powershell)',
     expect(decodedSyncScriptFromCall(0)).toContain('Add-Type -OutputAssembly');
     expect(execFile).toHaveBeenCalledTimes(1);
     expect(decodedAsyncScriptFromCall(0)).toContain('Add-Type -Path');
+  });
+});
+
+// Achado crítico da auditoria pós-merge (31/10/2026) — "execFileSync/execFile pro PowerShell
+// sem timeout em lugar nenhum": sem isso, um PowerShell travado (spooler em estado ruim,
+// antivírus interceptando, etc.) nunca retornava nem lançava — travava o processo inteiro
+// (síncrono) ou parava a impressão automática silenciosamente pra sempre (assíncrono).
+describe('timeout do PowerShell (achado crítico de auditoria, 2026-10-31)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    existsSync.mockReturnValue(true);
+    resetPrinterConnectivityCacheForTests();
+  });
+
+  it('getPrinter() (1ª checagem síncrona) passa timeout e killSignal pro execFileSync — nunca espera pra sempre', () => {
+    execFileSync.mockReturnValue('');
+
+    windowsPrinterDriver.getPrinter('MP-4200 TH');
+
+    const options = execFileSync.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
+  });
+
+  it('getPrinter() (1ª checagem síncrona): execFileSync estourando o timeout (ETIMEDOUT) é tratado como falha normal, não propaga', () => {
+    const timeoutError = Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
+    execFileSync.mockImplementation(() => {
+      throw timeoutError;
+    });
+
+    const result = windowsPrinterDriver.getPrinter('MP-4200 TH');
+
+    expect(result).toBeNull();
+    expect(getLastPrinterDriverError()).toContain('timed out');
+  });
+
+  it('sendRawBytes (printDirect) passa timeout e killSignal pro execFile — ciclo de impressão automática nunca fica parado pra sempre', async () => {
+    mockExecFileSuccess();
+
+    await runPrintDirect(Buffer.from('x'), 'MP-4200 TH');
+
+    const options = execFile.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
+  });
+
+  it('sendRawBytes (printDirect): execFile estourando o timeout chama error(), não fica pendurado', async () => {
+    const timeoutError = Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
+    mockExecFileFailure(timeoutError);
+
+    const result = await runPrintDirect(Buffer.from('x'), 'MP-4200 TH');
+
+    expect(result).toEqual({ ok: false, message: expect.stringContaining('timed out') });
+  });
+
+  it('ensureAssemblyCompiled passa timeout e killSignal pro execFileSync', () => {
+    existsSync.mockReturnValue(false);
+    execFileSync.mockReturnValue('');
+
+    ensureAssemblyCompiled();
+
+    const options = execFileSync.mock.calls[0][2] as { timeout?: number; killSignal?: string };
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.killSignal).toBe('SIGKILL');
   });
 });
