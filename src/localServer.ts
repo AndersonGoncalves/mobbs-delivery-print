@@ -62,10 +62,16 @@ export function createLocalPrintServer(
       return;
     }
 
-    // REQ-6 — só rejeita quando a chave vem preenchida e não bate; não é obrigatória (a defesa
-    // principal é CORS + o servidor só escutar em 127.0.0.1, ver topo do arquivo).
+    // Achado de auditoria pré-produção (01/11/2026) — "bypass de autenticação em /print-now
+    // (reavaliado)": a chave SEMPRE foi obrigatória pra chamar isto (REQ-6 nunca exigiu o
+    // contrário — a decisão antiga de só rejeitar "quando preenchida e errada" deixava a chave
+    // inteiramente opcional). CORS só controla se o NAVEGADOR deixa o JS de uma origem não
+    // permitida LER a resposta — não impede o POST de sair/ser processado (requisição "simple",
+    // sem preflight, com Content-Type fora da lista que dispara CORS); e o bind em 127.0.0.1 só
+    // limita o alcance pra rede, não pra outras abas abertas na MESMA máquina. Sem a chave
+    // correta, qualquer aba nesse computador conseguia imprimir sem credencial nenhuma.
     const providedKey = req.headers['x-print-api-key'];
-    if (providedKey && providedKey !== apiKey) {
+    if (providedKey !== apiKey) {
       sendJson(res, 401, { message: 'Chave de API inválida' });
       return;
     }

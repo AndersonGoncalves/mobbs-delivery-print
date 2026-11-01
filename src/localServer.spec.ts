@@ -41,15 +41,29 @@ describe('createLocalPrintServer (specs/0147-impressao-manual-direta-bridge)', (
     expect(response.headers.get('access-control-allow-origin')).toBeNull();
   });
 
-  it('REQ-4: imprime as linhas recebidas e devolve 200 (sem chave de API enviada)', async () => {
+  it('REQ-4: com a chave de API certa, imprime as linhas recebidas e devolve 200', async () => {
+    const response = await fetch(`${BASE_URL}/print-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Print-Api-Key': API_KEY },
+      body: JSON.stringify({ lines: [{ text: 'ID PEDIDO: 38' }] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(printer.print).toHaveBeenCalledWith([{ text: 'ID PEDIDO: 38' }]);
+  });
+
+  // Achado de auditoria pré-produção (01/11/2026) — "bypass de autenticação em /print-now
+  // (reavaliado)": antes, OMITIR a chave passava direto (só uma chave ERRADA era rejeitada) —
+  // qualquer aba aberta na mesma máquina do caixa conseguia imprimir sem credencial nenhuma.
+  it('achado de auditoria (01/11/2026): sem nenhuma chave de API enviada, rejeita (401) sem imprimir', async () => {
     const response = await fetch(`${BASE_URL}/print-now`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lines: [{ text: 'ID PEDIDO: 38' }] }),
     });
 
-    expect(response.status).toBe(200);
-    expect(printer.print).toHaveBeenCalledWith([{ text: 'ID PEDIDO: 38' }]);
+    expect(response.status).toBe(401);
+    expect(printer.print).not.toHaveBeenCalled();
   });
 
   it('REQ-6: com a chave de API certa, imprime normalmente', async () => {
@@ -85,7 +99,7 @@ describe('createLocalPrintServer (specs/0147-impressao-manual-direta-bridge)', (
 
     const response = await fetch(`${BASE_URL}/print-now`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Print-Api-Key': API_KEY },
       body: JSON.stringify({ lines: [] }),
     });
 
@@ -104,7 +118,7 @@ describe('createLocalPrintServer (specs/0147-impressao-manual-direta-bridge)', (
         port: LOCAL_PRINT_SERVER_PORT,
         path: '/print-now',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Print-Api-Key': API_KEY },
       });
       clientRequest.on('error', () => { /* esperado ao destruir a conexão no meio */ });
       // Manda só uma parte do JSON (nunca chama `.end()`) — o servidor fica esperando o resto.

@@ -6,6 +6,7 @@ import { BffClient } from './bffClient';
 import { createPrinter } from './printer';
 import { runPollCycle } from './pollCycle';
 import { createLocalPrintServer } from './localServer';
+import { sanitizePollIntervalSeconds } from './pollIntervalSeconds';
 import { ensureAssemblyCompiled, warmUpPrinterConnectivity } from './windowsPrinterDriver';
 import { BUILD_COMMIT, BUILD_DATE, BUILD_VERSION } from './buildInfo';
 
@@ -66,7 +67,9 @@ async function main() {
   async function tick() {
     try {
       const result = await runPollCycle(bffClient, printer);
-      intervalSeconds = result.pollIntervalSeconds;
+      // Achado de auditoria pré-produção (01/11/2026) — "pollIntervalSeconds vindo do BFF não é
+      // validado": um valor malformado (0, negativo, NaN) martelava o BFF sem pausa alguma.
+      intervalSeconds = sanitizePollIntervalSeconds(result.pollIntervalSeconds, intervalSeconds);
     } catch (error) {
       console.error(`Erro inesperado consultando o BFF: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
