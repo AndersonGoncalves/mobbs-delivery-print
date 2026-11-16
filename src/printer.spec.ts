@@ -10,6 +10,7 @@ const mockPrinter = {
   drawLine: jest.fn(),
   setTypeFontB: jest.fn(),
   setTypeFontA: jest.fn(),
+  append: jest.fn(),
   cut: jest.fn(),
   execute: jest.fn(),
 };
@@ -92,19 +93,48 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     await printer.print([{ text: '1234 5678 9012', bold: true, small: true }]);
 
     expect(mockPrinter.setTypeFontB).toHaveBeenCalledTimes(1);
-    expect(mockPrinter.println).toHaveBeenCalledWith('1234 5678 9012');
+    expect(mockPrinter.append).toHaveBeenCalledWith('1234 5678 9012');
     expect(mockPrinter.setTypeFontA).toHaveBeenCalledTimes(1);
 
     const fontBOrder = mockPrinter.setTypeFontB.mock.invocationCallOrder[0];
     const boldTrueOrder = mockPrinter.bold.mock.invocationCallOrder[0];
-    const printlnOrder = mockPrinter.println.mock.invocationCallOrder[0];
+    const appendOrder = mockPrinter.append.mock.invocationCallOrder[0];
     const boldFalseOrder = mockPrinter.bold.mock.invocationCallOrder[1];
     const fontAOrder = mockPrinter.setTypeFontA.mock.invocationCallOrder[0];
 
     expect(fontBOrder).toBeLessThan(boldTrueOrder);
-    expect(boldTrueOrder).toBeLessThan(printlnOrder);
-    expect(printlnOrder).toBeLessThan(boldFalseOrder);
+    expect(boldTrueOrder).toBeLessThan(appendOrder);
+    expect(appendOrder).toBeLessThan(boldFalseOrder);
     expect(boldFalseOrder).toBeLessThan(fontAOrder);
+  });
+
+  // Pedido explícito do usuário (16/11/2026) — achado real: `println()` da lib sempre quebra o
+  // texto em `config.width` (48) ANTES de considerar a fonte ativa, por isso a chave continuava
+  // em duas linhas mesmo com a Fonte B selecionada. `append()` bypassa esse fold.
+  it('usa append() em vez de println() pra linhas "small", pra nunca quebrar em duas linhas', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+    const longKey = '1234 5678 9012 3456 7890 1234 5678 9012 3456 7890 1234';
+
+    await printer.print([{ text: longKey, bold: true, small: true }]);
+
+    expect(mockPrinter.println).not.toHaveBeenCalledWith(longKey);
+    expect(mockPrinter.append).toHaveBeenCalledWith(longKey);
+    expect(mockPrinter.append).toHaveBeenCalledWith('\n');
+  });
+
+  // Pedido explícito do usuário (16/11/2026) — protocolo + data/hora ultrapassa 48 colunas mesmo
+  // em Fonte A normal — `noWrap` bypassa o fold sem trocar de fonte (diferente de `small`).
+  it('usa append() quando a linha tem "noWrap", sem trocar de fonte', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+    const longLine = 'Protocolo de autorizacao: 223261032153733  16/11/2026 20:07:34';
+
+    await printer.print([{ text: longLine, noWrap: true }]);
+
+    expect(mockPrinter.println).not.toHaveBeenCalledWith(longLine);
+    expect(mockPrinter.append).toHaveBeenCalledWith(longLine);
+    expect(mockPrinter.append).toHaveBeenCalledWith('\n');
+    expect(mockPrinter.setTypeFontB).not.toHaveBeenCalled();
+    expect(mockPrinter.setTypeFontA).not.toHaveBeenCalled();
   });
 
   it('não troca de fonte quando a linha não tem "small"', async () => {

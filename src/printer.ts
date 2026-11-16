@@ -81,6 +81,16 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
         if (line.bold) thermalPrinter.bold(true);
         if (line.text === '') {
           thermalPrinter.newLine();
+        } else if (line.small || line.noWrap) {
+          // Pedido explícito do usuário (16/11/2026) — achado real: `println()` da própria lib
+          // sempre quebra o texto em `config.width` (48, fixo desde a construção), mesmo quando a
+          // linha (ex. protocolo + data/hora) só ultrapassa esse limite em caracteres normais, sem
+          // nenhuma fonte condensada envolvida — `_fold()` em `core.js` corta cru em 48, ignorando
+          // Font A/B. `append()` (também pública na lib) bypassa esse fold e manda o texto cru numa
+          // linha só. `small` (Fonte B) usa isso pra caber a chave de acesso; `noWrap` é o mesmo
+          // bypass sem trocar de fonte, pra linhas que só excedem 48 caracteres em Fonte A mesmo.
+          thermalPrinter.append(line.text);
+          thermalPrinter.append('\n');
         } else {
           thermalPrinter.println(line.text);
         }
