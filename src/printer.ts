@@ -72,6 +72,9 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
           thermalPrinter.drawLine();
           continue;
         }
+        // Pedido explícito do usuário (16/11/2026) — bloco "consulte pela chave de acesso"
+        // centralizado, igual o DANFCE real.
+        if (line.center) thermalPrinter.alignCenter();
         // Pedido explícito do usuário (16/11/2026) — Fonte B (condensada) só pra chave de acesso
         // da NFCe: cabe mais caracteres na mesma largura física do papel do que a Fonte A normal.
         if (line.small) thermalPrinter.setTypeFontB();
@@ -83,6 +86,7 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
         }
         if (line.bold) thermalPrinter.bold(false);
         if (line.small) thermalPrinter.setTypeFontA();
+        if (line.center) thermalPrinter.alignLeft();
       }
       thermalPrinter.cut();
       await thermalPrinter.execute();

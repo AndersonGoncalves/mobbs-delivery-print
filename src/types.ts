@@ -12,6 +12,10 @@ export interface ReceiptLine {
   /** Pedido explícito do usuário (16/11/2026) — imprime com a Fonte B (condensada) da impressora,
    * que cabe mais caracteres na mesma largura física — usado só pra chave de acesso da NFCe. */
   small?: boolean;
+  /** Pedido explícito do usuário (16/11/2026) — centraliza a linha (`alignCenter()` antes de
+   * imprimir, `alignLeft()` depois) — usado só no bloco "consulte pela chave de acesso" e no
+   * rótulo do QR code do cupom fiscal. */
+  center?: boolean;
 }
 
 export interface PendingOrder {
