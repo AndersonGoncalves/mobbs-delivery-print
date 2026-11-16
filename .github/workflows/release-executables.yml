@@ -28,6 +28,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Achado real (16/11/2026) — sem isso, o checkout é raso (profundidade 1) e
+          # `git rev-list --count HEAD` abaixo sempre devolve 1, travando BUILD_NUMBER pra sempre
+          # em "1" (nunca incrementava de verdade, specs/0200).
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
