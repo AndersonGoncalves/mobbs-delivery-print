@@ -116,6 +116,35 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     expect(mockPrinter.setTypeFontA).not.toHaveBeenCalled();
   });
 
+  // Pedido explícito do usuário (16/11/2026) — bloco "consulte pela chave de acesso" centralizado
+  // no cupom fiscal: centraliza, imprime, e volta pro alinhamento normal depois.
+  it('centraliza a linha quando tem "center", e volta pro alinhamento normal depois', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await printer.print([{ text: 'Consulte pela Chave de Acesso em', center: true }]);
+
+    expect(mockPrinter.alignCenter).toHaveBeenCalledTimes(1);
+    expect(mockPrinter.println).toHaveBeenCalledWith('Consulte pela Chave de Acesso em');
+    // alignLeft() também é chamado 1x no início de print() (alinhamento padrão), então 2x no total
+    // aqui: a inicial + a de volta depois da linha centralizada.
+    expect(mockPrinter.alignLeft).toHaveBeenCalledTimes(2);
+
+    const centerOrder = mockPrinter.alignCenter.mock.invocationCallOrder[0];
+    const printlnOrder = mockPrinter.println.mock.invocationCallOrder[0];
+    const leftOrder = mockPrinter.alignLeft.mock.invocationCallOrder[1];
+
+    expect(centerOrder).toBeLessThan(printlnOrder);
+    expect(printlnOrder).toBeLessThan(leftOrder);
+  });
+
+  it('não centraliza quando a linha não tem "center"', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await printer.print([{ text: 'TOTAL: R$1,00' }]);
+
+    expect(mockPrinter.alignCenter).not.toHaveBeenCalled();
+  });
+
   it('REQ-10 — lança erro claro quando a impressora não está conectada (resolve false), sem imprimir nada', async () => {
     mockPrinter.isPrinterConnected.mockResolvedValue(false);
     const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
