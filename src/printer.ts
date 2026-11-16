@@ -64,6 +64,14 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
           thermalPrinter.alignLeft();
           continue;
         }
+        // Pedido explícito do usuário (16/11/2026) — achado real: o BFF não sabe a largura de
+        // verdade configurada na impressora; `drawLine()` da própria lib desenha a linha na
+        // largura exata do `config.width` (48 por padrão, já que `createPrinter` abaixo nunca
+        // sobrescreve), em vez de um número de traços fixo que ficava curto.
+        if (line.divider) {
+          thermalPrinter.drawLine();
+          continue;
+        }
         if (line.bold) thermalPrinter.bold(true);
         if (line.text === '') {
           thermalPrinter.newLine();

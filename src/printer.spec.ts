@@ -7,6 +7,7 @@ const mockPrinter = {
   println: jest.fn(),
   newLine: jest.fn(),
   printQR: jest.fn(),
+  drawLine: jest.fn(),
   cut: jest.fn(),
   execute: jest.fn(),
 };
@@ -65,6 +66,20 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     expect(mockPrinter.printQR).toHaveBeenCalledWith('https://qr.example/chave');
     expect(mockPrinter.println).not.toHaveBeenCalledWith('');
     expect(mockPrinter.println).toHaveBeenCalledWith('-- BsDelivery --');
+  });
+
+  // Pedido explícito do usuário (16/11/2026) — achado real: a linha tracejada fixa (32 traços)
+  // ficava curta porque a largura real configurada (`config.width`, default 48) é maior. `drawLine()`
+  // da própria lib sempre desenha na largura certa, qualquer que ela seja.
+  it('desenha a linha tracejada via drawLine() quando a linha tem "divider", sem chamar println', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await printer.print([{ text: 'ITENS (1)' }, { text: '', divider: true }, { text: 'TOTAL: R$1,00' }]);
+
+    expect(mockPrinter.drawLine).toHaveBeenCalledTimes(1);
+    expect(mockPrinter.println).not.toHaveBeenCalledWith('');
+    expect(mockPrinter.println).toHaveBeenCalledWith('ITENS (1)');
+    expect(mockPrinter.println).toHaveBeenCalledWith('TOTAL: R$1,00');
   });
 
   it('REQ-10 — lança erro claro quando a impressora não está conectada (resolve false), sem imprimir nada', async () => {
