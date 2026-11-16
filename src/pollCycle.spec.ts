@@ -12,6 +12,8 @@ function buildBffClient(overrides: Partial<BffClient> = {}): BffClient {
       ],
     }),
     markPrinted: jest.fn().mockResolvedValue(undefined),
+    fetchPendingFiscalReceipts: jest.fn().mockResolvedValue({ orders: [] }),
+    markFiscalPrinted: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   } as BffClient;
 }
@@ -49,6 +51,38 @@ describe('runPollCycle (specs/0139-impressao-automatica-bridge REQ-9/REQ-10)', (
     expect(bffClient.markPrinted).toHaveBeenCalledWith('o-2');
     expect(bffClient.markPrinted).not.toHaveBeenCalledWith('o-1');
     expect(result).toEqual({ pollIntervalSeconds: 10, printedCount: 1, failedCount: 1 });
+  });
+
+  // Pedido explícito do usuário (16/11/2026) — fila separada do cupom fiscal simplificado.
+  it('imprime também o cupom fiscal pendente, como um segundo papel, depois do ticket normal', async () => {
+    const bffClient = buildBffClient({
+      fetchPendingOrders: jest.fn().mockResolvedValue({ pollIntervalSeconds: 10, orders: [] }),
+      fetchPendingFiscalReceipts: jest.fn().mockResolvedValue({
+        orders: [{ orderId: 'o-3', lines: [{ text: 'NFC-e no 123 Serie 1' }] }],
+      }),
+    });
+    const printer = buildPrinter();
+
+    const result = await runPollCycle(bffClient, printer, () => undefined);
+
+    expect(printer.print).toHaveBeenCalledWith([{ text: 'NFC-e no 123 Serie 1' }]);
+    expect(bffClient.markFiscalPrinted).toHaveBeenCalledWith('o-3');
+    expect(result).toEqual({ pollIntervalSeconds: 10, printedCount: 1, failedCount: 0 });
+  });
+
+  it('falha ao imprimir o cupom fiscal não trava o ciclo nem confirma a impressão', async () => {
+    const bffClient = buildBffClient({
+      fetchPendingOrders: jest.fn().mockResolvedValue({ pollIntervalSeconds: 10, orders: [] }),
+      fetchPendingFiscalReceipts: jest.fn().mockResolvedValue({
+        orders: [{ orderId: 'o-3', lines: [{ text: 'NFC-e no 123 Serie 1' }] }],
+      }),
+    });
+    const printer = buildPrinter({ print: jest.fn().mockRejectedValue(new Error('impressora desconectada')) });
+
+    const result = await runPollCycle(bffClient, printer, () => undefined);
+
+    expect(bffClient.markFiscalPrinted).not.toHaveBeenCalled();
+    expect(result).toEqual({ pollIntervalSeconds: 10, printedCount: 0, failedCount: 1 });
   });
 
   it('sem pedidos pendentes, não chama a impressora', async () => {

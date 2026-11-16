@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
 import type { Config } from './config';
-import type { PendingOrdersResponse } from './types';
+import type { PendingFiscalReceiptsResponse, PendingOrdersResponse } from './types';
 
 export class BffClient {
   private readonly http: AxiosInstance;
@@ -22,5 +22,16 @@ export class BffClient {
   /** REQ-3 — idempotente no BFF: chamar de novo pro mesmo pedido não dá erro. */
   async markPrinted(orderId: string): Promise<void> {
     await this.http.post(`/restaurants/me/print-queue/${orderId}/printed`);
+  }
+
+  /** Pedido explícito do usuário (16/11/2026) — fila separada do cupom fiscal simplificado. */
+  async fetchPendingFiscalReceipts(): Promise<PendingFiscalReceiptsResponse> {
+    const { data } = await this.http.get<PendingFiscalReceiptsResponse>('/restaurants/me/fiscal-print-queue/pending');
+    return data;
+  }
+
+  /** Idempotente no BFF, mesmo padrão de `markPrinted`. */
+  async markFiscalPrinted(orderId: string): Promise<void> {
+    await this.http.post(`/restaurants/me/fiscal-print-queue/${orderId}/printed`);
   }
 }

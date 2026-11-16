@@ -2,6 +2,9 @@
 export interface ReceiptLine {
   text: string;
   bold?: boolean;
+  /** Pedido explícito do usuário (16/11/2026) — presente só no cupom fiscal simplificado: imprime
+   * este conteúdo como QR code em vez de texto. */
+  qr?: string;
 }
 
 export interface PendingOrder {
@@ -11,5 +14,11 @@ export interface PendingOrder {
 
 export interface PendingOrdersResponse {
   pollIntervalSeconds: number;
+  orders: PendingOrder[];
+}
+
+/** Pedido explícito do usuário (16/11/2026) — fila separada do cupom fiscal simplificado, sem
+ * `pollIntervalSeconds` próprio (reaproveita o intervalo já configurado pro ticket normal). */
+export interface PendingFiscalReceiptsResponse {
   orders: PendingOrder[];
 }

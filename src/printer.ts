@@ -55,6 +55,15 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
       thermalPrinter.clear();
       thermalPrinter.alignLeft();
       for (const line of lines) {
+        // Pedido explícito do usuário (16/11/2026) — linha de QR code (só no cupom fiscal
+        // simplificado): imprime o código em vez do texto, centralizado, e volta pro
+        // alinhamento normal em seguida.
+        if (line.qr) {
+          thermalPrinter.alignCenter();
+          thermalPrinter.printQR(line.qr);
+          thermalPrinter.alignLeft();
+          continue;
+        }
         if (line.bold) thermalPrinter.bold(true);
         if (line.text === '') {
           thermalPrinter.newLine();
