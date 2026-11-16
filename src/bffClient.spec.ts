@@ -33,4 +33,24 @@ describe('BffClient (specs/0139-impressao-automatica-bridge)', () => {
 
     expect(http.post).toHaveBeenCalledWith('/restaurants/me/print-queue/o-1/printed');
   });
+
+  // Pedido explícito do usuário (16/11/2026) — fila separada do cupom fiscal simplificado.
+  it('consulta a fila do cupom fiscal', async () => {
+    const client = new BffClient({ bffUrl: 'https://api.bsdelivery.com.br', apiKey: 'key-123' });
+    http.get.mockResolvedValue({ data: { orders: [] } });
+
+    const result = await client.fetchPendingFiscalReceipts();
+
+    expect(http.get).toHaveBeenCalledWith('/restaurants/me/fiscal-print-queue/pending');
+    expect(result).toEqual({ orders: [] });
+  });
+
+  it('confirma a impressão do cupom fiscal de um pedido', async () => {
+    const client = new BffClient({ bffUrl: 'https://api.bsdelivery.com.br', apiKey: 'key-123' });
+    http.post.mockResolvedValue({});
+
+    await client.markFiscalPrinted('o-1');
+
+    expect(http.post).toHaveBeenCalledWith('/restaurants/me/fiscal-print-queue/o-1/printed');
+  });
 });
