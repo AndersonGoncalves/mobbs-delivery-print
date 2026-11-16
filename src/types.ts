@@ -5,6 +5,10 @@ export interface ReceiptLine {
   /** Pedido explícito do usuário (16/11/2026) — presente só no cupom fiscal simplificado: imprime
    * este conteúdo como QR code em vez de texto. */
   qr?: string;
+  /** Pedido explícito do usuário (16/11/2026) — quando presente (`text` fica vazio, ignorado),
+   * desenha uma linha tracejada usando `drawLine()` da própria `node-thermal-printer` (largura
+   * exata configurada na impressora, nunca um número fixo adivinhado pelo BFF). */
+  divider?: boolean;
 }
 
 export interface PendingOrder {
