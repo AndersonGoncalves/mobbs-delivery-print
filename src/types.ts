@@ -16,6 +16,11 @@ export interface ReceiptLine {
    * imprimir, `alignLeft()` depois) — usado só no bloco "consulte pela chave de acesso" e no
    * rótulo do QR code do cupom fiscal. */
   center?: boolean;
+  /** Pedido explícito do usuário (16/11/2026) — bypassa o fold de 48 colunas da própria lib
+   * (`append()` em vez de `println()`), sem trocar de fonte (diferente de `small`) — usado na
+   * linha "Protocolo de autorizacao: {protocolo}  {data}", que ultrapassa 48 caracteres em Fonte A
+   * normal mesmo. */
+  noWrap?: boolean;
 }
 
 export interface PendingOrder {
