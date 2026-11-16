@@ -8,6 +8,8 @@ const mockPrinter = {
   newLine: jest.fn(),
   printQR: jest.fn(),
   drawLine: jest.fn(),
+  setTypeFontB: jest.fn(),
+  setTypeFontA: jest.fn(),
   cut: jest.fn(),
   execute: jest.fn(),
 };
@@ -80,6 +82,38 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     expect(mockPrinter.println).not.toHaveBeenCalledWith('');
     expect(mockPrinter.println).toHaveBeenCalledWith('ITENS (1)');
     expect(mockPrinter.println).toHaveBeenCalledWith('TOTAL: R$1,00');
+  });
+
+  // Pedido explícito do usuário (16/11/2026) — Fonte B só pra chave de acesso da NFCe, pra caber
+  // numa linha só (54 caracteres formatados, mais do que os 48 da Fonte A normal).
+  it('troca pra Fonte B quando a linha tem "small", em negrito, e volta pra Fonte A depois', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await printer.print([{ text: '1234 5678 9012', bold: true, small: true }]);
+
+    expect(mockPrinter.setTypeFontB).toHaveBeenCalledTimes(1);
+    expect(mockPrinter.println).toHaveBeenCalledWith('1234 5678 9012');
+    expect(mockPrinter.setTypeFontA).toHaveBeenCalledTimes(1);
+
+    const fontBOrder = mockPrinter.setTypeFontB.mock.invocationCallOrder[0];
+    const boldTrueOrder = mockPrinter.bold.mock.invocationCallOrder[0];
+    const printlnOrder = mockPrinter.println.mock.invocationCallOrder[0];
+    const boldFalseOrder = mockPrinter.bold.mock.invocationCallOrder[1];
+    const fontAOrder = mockPrinter.setTypeFontA.mock.invocationCallOrder[0];
+
+    expect(fontBOrder).toBeLessThan(boldTrueOrder);
+    expect(boldTrueOrder).toBeLessThan(printlnOrder);
+    expect(printlnOrder).toBeLessThan(boldFalseOrder);
+    expect(boldFalseOrder).toBeLessThan(fontAOrder);
+  });
+
+  it('não troca de fonte quando a linha não tem "small"', async () => {
+    const printer = createPrinter({ printerInterface: 'printer:POS-80', printerType: 'epson' });
+
+    await printer.print([{ text: 'TOTAL: R$1,00' }]);
+
+    expect(mockPrinter.setTypeFontB).not.toHaveBeenCalled();
+    expect(mockPrinter.setTypeFontA).not.toHaveBeenCalled();
   });
 
   it('REQ-10 — lança erro claro quando a impressora não está conectada (resolve false), sem imprimir nada', async () => {
