@@ -72,6 +72,9 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
           thermalPrinter.drawLine();
           continue;
         }
+        // Pedido explícito do usuário (16/11/2026) — Fonte B (condensada) só pra chave de acesso
+        // da NFCe: cabe mais caracteres na mesma largura física do papel do que a Fonte A normal.
+        if (line.small) thermalPrinter.setTypeFontB();
         if (line.bold) thermalPrinter.bold(true);
         if (line.text === '') {
           thermalPrinter.newLine();
@@ -79,6 +82,7 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
           thermalPrinter.println(line.text);
         }
         if (line.bold) thermalPrinter.bold(false);
+        if (line.small) thermalPrinter.setTypeFontA();
       }
       thermalPrinter.cut();
       await thermalPrinter.execute();

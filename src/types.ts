@@ -9,6 +9,9 @@ export interface ReceiptLine {
    * desenha uma linha tracejada usando `drawLine()` da própria `node-thermal-printer` (largura
    * exata configurada na impressora, nunca um número fixo adivinhado pelo BFF). */
   divider?: boolean;
+  /** Pedido explícito do usuário (16/11/2026) — imprime com a Fonte B (condensada) da impressora,
+   * que cabe mais caracteres na mesma largura física — usado só pra chave de acesso da NFCe. */
+  small?: boolean;
 }
 
 export interface PendingOrder {
