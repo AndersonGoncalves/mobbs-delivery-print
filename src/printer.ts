@@ -60,7 +60,9 @@ export function createPrinter(config: Pick<Config, 'printerInterface' | 'printer
         // alinhamento normal em seguida.
         if (line.qr) {
           thermalPrinter.alignCenter();
-          thermalPrinter.printQR(line.qr);
+          // Pedido explícito do usuário (17/11/2026) — QR um pouco maior: `cellSize` default da
+          // lib é 3 (EPSON) / 4 (STAR), range 1-8 nos dois — 5 aumenta sem ficar grande demais.
+          thermalPrinter.printQR(line.qr, { cellSize: 5 });
           thermalPrinter.alignLeft();
           continue;
         }
