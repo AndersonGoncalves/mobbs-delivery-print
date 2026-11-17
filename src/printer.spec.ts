@@ -66,7 +66,9 @@ describe('createPrinter (specs/0139-impressao-automatica-bridge REQ-9/REQ-11)', 
     await printer.print([{ text: 'Consulte pela chave' }, { text: '', qr: 'https://qr.example/chave' }, { text: '-- BsDelivery --' }]);
 
     expect(mockPrinter.alignCenter).toHaveBeenCalled();
-    expect(mockPrinter.printQR).toHaveBeenCalledWith('https://qr.example/chave');
+    // Pedido explícito do usuário (17/11/2026) — cellSize 5 (default da lib é 3 EPSON/4 STAR, range
+    // 1-8) pra aumentar um pouco o QR impresso.
+    expect(mockPrinter.printQR).toHaveBeenCalledWith('https://qr.example/chave', { cellSize: 5 });
     expect(mockPrinter.println).not.toHaveBeenCalledWith('');
     expect(mockPrinter.println).toHaveBeenCalledWith('-- BsDelivery --');
   });
